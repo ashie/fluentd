@@ -614,7 +614,7 @@ module Fluent::Config
 
           c = InfFloatConfig.new
           assert_nothing_raised { c.configure(default) }
-          assert_raise(ArgumentError) { c.configure(default, strict_config_value: true) }
+          assert_raise(Fluent::ConfigError) { c.configure(default, strict_config_value: true) }
         end
       end
     end
