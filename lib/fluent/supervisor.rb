@@ -257,7 +257,7 @@ module Fluent
         config_data << "\n" << inline_config.gsub("\\n","\n")
       end
       fluentd_conf = Fluent::Config.parse(config_data, config_fname, config_basedir, params['use_v1_config'])
-      system_config = SystemConfig.create(fluentd_conf)
+      system_config = SystemConfig.create(fluentd_conf, strict_config_value: params[:strict_config_value])
 
       # these params must NOT be configured via system config here.
       # these may be overridden by command line params.
@@ -793,7 +793,7 @@ module Fluent
     end
 
     def build_system_config(conf)
-      system_config = SystemConfig.create(conf)
+      system_config = SystemConfig.create(conf, strict_config_value: @cl_opt[:strict_config_value])
       opt = {}
       Fluent::SystemConfig::SYSTEM_CONFIG_PARAMETERS.each do |param|
         if @cl_opt.key?(param) && !@cl_opt[param].nil?
