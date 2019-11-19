@@ -149,6 +149,10 @@ class TestConfigTypes < ::Test::Unit::TestCase
       assert_equal Encoding::UTF_8, Config::STRING_TYPE.call(val, {}).encoding
     end
 
+    test 'string nil' do
+      assert_equal nil, Config::STRING_TYPE.call(nil, {})
+    end
+
     data('latin' => 'Märch',
          'ascii' => 'ascii',
          'space' => '     ',

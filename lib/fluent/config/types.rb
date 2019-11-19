@@ -87,9 +87,13 @@ module Fluent
     end
 
     STRING_TYPE = Proc.new { |val, opts = {}, name = nil|
-      v = val.to_s
-      v = v.frozen? ? v.dup : v # config_param can't assume incoming string is mutable
-      v.force_encoding(Encoding::UTF_8)
+      if val.nil?
+        nil
+      else
+        v = val.to_s
+        v = v.frozen? ? v.dup : v # config_param can't assume incoming string is mutable
+        v.force_encoding(Encoding::UTF_8)
+      end
     }
 
     ENUM_TYPE = Proc.new { |val, opts = {}, name = nil|
