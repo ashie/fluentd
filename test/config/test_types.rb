@@ -1,3 +1,4 @@
+# coding: utf-8
 require 'helper'
 require 'fluent/config/types'
 
@@ -151,6 +152,10 @@ class TestConfigTypes < ::Test::Unit::TestCase
 
     test 'string nil' do
       assert_equal nil, Config::STRING_TYPE.call(nil, {})
+    end
+
+    test 'string default' do
+      assert_equal "hoge", Config::STRING_TYPE.call(:default, {default: "hoge"})
     end
 
     data('latin' => 'Märch',

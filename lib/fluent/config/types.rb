@@ -87,7 +87,13 @@ module Fluent
     end
 
     STRING_TYPE = Proc.new { |val, opts = {}, name = nil|
-      if val.nil?
+      if val == :default
+        if opts.has_key?(:default)
+          opts[:default]
+        else
+          nil
+        end
+      elsif val.nil?
         nil
       else
         v = val.to_s
