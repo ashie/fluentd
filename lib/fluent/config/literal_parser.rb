@@ -52,6 +52,14 @@ module Fluent
       def initialize(strscan, eval_context)
         super(strscan)
         @eval_context = eval_context
+        if @eval_context.instance_of?(Binding)
+          def @eval_context.use_nil
+            raise SetNil
+          end
+          def @eval_context.use_default
+            raise SetDefault
+          end
+        end
       end
 
       def parse_literal(string_boundary_charset = LINE_END)
