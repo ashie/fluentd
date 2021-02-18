@@ -1,0 +1,30 @@
+name: Testing on Windows
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      # increasing max-parallel makes some tests unstable
+      max-parallel: 2
+      matrix:
+        ruby: [2.7, 2.6, 2.5]
+        os:
+          - windows-latest
+    name: Ruby ${{ matrix.ruby }} unit testing on ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v2
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ matrix.ruby }}
+    - name: unit testing
+      env:
+        CI: true
+      run: |
+        gem install bundler rake
+        bundle install --jobs 4 --retry 3
+        bundle exec rake test
