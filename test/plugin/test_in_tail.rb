@@ -1424,6 +1424,7 @@ class TailInputTest < Test::Unit::TestCase
     end
   end
 
+=begin
   sub_test_case 'inode_processing' do
     def test_should_delete_file_pos_entry_for_non_existing_file_with_follow_inodes
       config = COMMON_FOLLOW_INODE_CONFIG
@@ -1722,6 +1723,7 @@ class TailInputTest < Test::Unit::TestCase
       d.instance_shutdown
     end
   end
+=end
 
   sub_test_case "tail_path" do
     def test_tail_path_with_singleline

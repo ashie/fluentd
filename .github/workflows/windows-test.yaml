@@ -27,4 +27,4 @@ jobs:
       - name: Install dependencies
         run: ridk exec bundle install
       - name: Run tests
-        run: bundle exec rake test TESTOPTS=-v
+        run: bundle exec rake test TESTOPTS=-v TESTS=test/plugin/test_in_tail.rb
