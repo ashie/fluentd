@@ -1,4 +1,3 @@
-# coding: utf-8
 require_relative '../helper'
 require 'fluent/plugin_helper/child_process'
 require 'fluent/plugin/base'
