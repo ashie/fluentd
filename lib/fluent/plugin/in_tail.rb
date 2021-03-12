@@ -406,14 +406,8 @@ module Fluent::Plugin
           log.warn "Skip #{target_info.path} because unexpected setup error happens: #{e}"
           next
         end
-
-        begin
-          target_info = TargetInfo.new(target_info.path, Fluent::FileWrapper.stat(target_info.path).ino)
-          @tails[target_info] = tw
-        rescue Errno::ENOENT
-          $log.warn "stat() for #{target_info.path} failed with ENOENT. Drop tail watcher for now."
-          # explicitly detach and close watcher `tw`, or is it being garbage-collected?
-        end
+        target_info = TargetInfo.new(target_info.path, Fluent::FileWrapper.stat(target_info.path).ino)
+        @tails[target_info] = tw
       }
     end
 
