@@ -21,8 +21,6 @@ jobs:
           - ruby-version: '3.0.1'
             os: windows-latest
             experimental: true
-            env:
-              RUBYLIB: C:/hostedtoolcache/windows/Ruby/3.0.1/x64/lib/ruby/gems/3.0.0/gems/fiddle-1.0.8/lib
 
     name: Unit testing with Ruby ${{ matrix.ruby-version }} on ${{ matrix.os }}
     steps:
@@ -34,6 +32,8 @@ jobs:
       - name: Add Fiddle 1.0.8
         if: ${{ matrix.ruby-version == '3.0.1' }}
         run: gem install fiddle --version 1.0.8
+        env:
+          RUBYLIB: C:/hostedtoolcache/windows/Ruby/3.0.1/x64/lib/ruby/gems/3.0.0/gems/fiddle-1.0.8/lib
       - name: Install dependencies
         run: ridk exec bundle install
       - name: Run tests
