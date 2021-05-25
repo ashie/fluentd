@@ -33,7 +33,7 @@ jobs:
           ruby-version: ${{ matrix.ruby-version }}
       - name: Add Fiddle 1.0.8
         if: ${{ matrix.ruby-version == '3.0.1' }}
-        run: echo "gem 'fiddle', '1.0.8'" > Gemfile.local
+        run: gem install fiddle --version 1.0.8
       - name: Install dependencies
         run: ridk exec bundle install
       - name: Run tests
