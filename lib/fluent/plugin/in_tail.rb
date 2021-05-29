@@ -418,14 +418,18 @@ module Fluent::Plugin
       end
 
       begin
+        puts "run setup watcher"
         tw = setup_watcher(target_info, pe)
+        puts "run setup watcher done"
       rescue WatcherSetupError => e
         log.warn "Skip #{target_info.path} because unexpected setup error happens: #{e}"
         return
       end
 
       begin
+        puts "Create TaretInfo"
         target_info = TargetInfo.new(target_info.path, Fluent::FileWrapper.stat(target_info.path).ino)
+        puts "Create TaretInfo done"
         @tails[target_info] = tw
         tw.on_notify
       rescue Errno::ENOENT, Errno::EACCES => e

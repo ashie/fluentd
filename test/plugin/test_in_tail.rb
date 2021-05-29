@@ -2100,7 +2100,9 @@ class TailInputTest < Test::Unit::TestCase
                               })
       d = create_driver(config, false)
       mock.proxy(d.instance).setup_watcher(anything, anything) do |tw|
+        puts "chmod"
         FileUtils.chmod(0000, "#{TMP_DIR}/noaccess")
+        puts "chmod done"
         tw
       end
       assert_nothing_raised do
