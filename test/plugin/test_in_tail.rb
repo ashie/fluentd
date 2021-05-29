@@ -2107,7 +2107,8 @@ class TailInputTest < Test::Unit::TestCase
         d.run(shutdown: false) {}
       end
       d.instance_shutdown
-      assert($log.out.logs.any?{|log| log.include?("stat() for #{path} failed with Errno::EACCES. Drop tail watcher for now.\n") })
+      assert($log.out.logs.any?{|log| log.include?("stat() for #{path} failed with Errno::EACCES. Drop tail watcher for now.\n") },
+             "Actual log:\n#{$log.out.logs.join}")
     end
   ensure
     FileUtils.chmod(0755, "#{TMP_DIR}/noaccess")
