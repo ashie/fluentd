@@ -2088,6 +2088,7 @@ class TailInputTest < Test::Unit::TestCase
   end
 
   def test_EACCES_error_after_setup_watcher
+    omit "Cannot test with root user" if Process::UID.eid == 0
     path = "#{TMP_DIR}/noaccess/tail.txt"
     begin
       FileUtils.mkdir_p("#{TMP_DIR}/noaccess")
