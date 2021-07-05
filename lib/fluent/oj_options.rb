@@ -14,12 +14,6 @@ module Fluent
       'mode': %i[strict null compat json rails object custom]
     }
 
-    DEFAULTS = {
-      'bigdecimal_load': :float,
-      'mode': :compat,
-      'use_to_json': true
-    }
-
     @@available = false
 
     def self.init
@@ -39,8 +33,7 @@ module Fluent
     private
 
     def self.get
-      options = {}
-      DEFAULTS.each { |key, value| options[key] = value }
+      options = Fluent::DEFAULT_OJ_OPTIONS.dup
       AVAILABLE_OPTIONS.each do |key, type|
         env_value = ENV["FLUENT_OJ_OPTION_#{key.upcase}"]
         next if env_value.nil?

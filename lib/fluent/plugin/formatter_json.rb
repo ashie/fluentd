@@ -32,8 +32,8 @@ module Fluent
 
         begin
           raise LoadError unless @json_parser == 'oj'
-          require 'fluent/oj_options'
-          raise LoadError unless Fluent::OjOptions.available?
+          require 'oj'
+          Oj.default_options = Fluent::DEFAULT_OJ_OPTIONS
           @dump_proc = Oj.method(:dump)
         rescue LoadError
           @dump_proc = Yajl.method(:dump)
