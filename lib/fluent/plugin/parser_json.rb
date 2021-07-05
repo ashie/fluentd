@@ -17,7 +17,6 @@
 require 'fluent/plugin/parser'
 require 'fluent/env'
 require 'fluent/time'
-require 'fluent/oj_options'
 
 require 'yajl'
 require 'json'
@@ -51,8 +50,8 @@ module Fluent
       def configure_json_parser(name)
         case name
         when :oj
-          require 'oj'
-          Oj.default_options = Fluent::OjOptions.new.get_options
+          require 'fluent/oj_options'
+          raise LoadError unless Fluent::OjOptions.available?
           [Oj.method(:load), Oj::ParseError]
         when :json then [JSON.method(:load), JSON::ParserError]
         when :yajl then [Yajl.method(:load), Yajl::ParseError]
