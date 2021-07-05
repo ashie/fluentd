@@ -16,6 +16,7 @@
 
 require 'fluent/plugin/formatter'
 require 'fluent/env'
+require 'fluent/oj_options'
 
 module Fluent
   module Plugin
@@ -33,7 +34,7 @@ module Fluent
         begin
           raise LoadError unless @json_parser == 'oj'
           require 'oj'
-          Oj.default_options = Fluent::DEFAULT_OJ_OPTIONS
+          Oj.default_options = Fluent::OjOptions.new.get_options
           @dump_proc = Oj.method(:dump)
         rescue LoadError
           @dump_proc = Yajl.method(:dump)
