@@ -67,6 +67,7 @@ module Fluent
         desc 'How to enqueue chunks to be flushed. "interval" flushes per flush_interval, "immediate" flushes just after event arrival.'
         config_param :flush_mode, :enum, list: [:default, :lazy, :interval, :immediate], default: :default
         config_param :flush_interval, :time, default: 60, desc: 'The interval between buffer chunk flushes.'
+        config_param :flush_bytes_limit_per_second, :size, default: nil, desc: 'The number of flush bytes per second'
 
         config_param :flush_thread_count, :integer, default: 1, desc: 'The number of threads to flush the buffer.'
 
@@ -228,6 +229,7 @@ module Fluent
         @enable_msgpack_streamer = false # decided later
 
         @buffer = nil
+        @flush_rate_monitor = nil
         @secondary = nil
         @retry = nil
         @dequeued_chunks = nil
@@ -377,6 +379,8 @@ module Fluent
           @buffer = Plugin.new_buffer(buffer_type, parent: self)
           @buffer.configure(buffer_conf)
           @buffer.enable_update_timekeys if @chunk_key_time
+
+          @flush_rate_monitor = FlushRateMonitor.new(@buffer_config.flush_bytes_limit_per_second)
 
           @flush_at_shutdown = @buffer_config.flush_at_shutdown
           if @flush_at_shutdown.nil?
@@ -1168,6 +1172,7 @@ module Fluent
 
             output.try_write(chunk)
             check_slow_flush(chunk_write_start)
+            @flush_rate_monitor.add(chunk.bytesize)
           else # output plugin without delayed purge
             chunk_id = chunk.unique_id
             dump_chunk_id = dump_unique_id_hex(chunk_id)
@@ -1181,6 +1186,7 @@ module Fluent
             log.trace "write operation done, committing", chunk: dump_chunk_id
             commit_write(chunk_id, delayed: false, secondary: using_secondary)
             log.trace "done to commit a chunk", chunk: dump_chunk_id
+            @flush_rate_monitor.add(chunk.bytesize)
           end
         rescue *UNRECOVERABLE_ERRORS => e
           if @secondary
@@ -1510,6 +1516,11 @@ module Fluent
               end
             end
 
+            next_clock = @flush_rate_monitor.next_clock
+
+            unless next_clock.nil?
+              interval = Fluent::Clock.now - next_clock
+            end
             state.cond_var.wait(state.mutex, interval) if interval > 0
           end
         rescue => e
@@ -1549,6 +1560,54 @@ module Fluent
         end
 
         { 'output' => stats }
+      end
+
+      class FlushRateMonitor
+        def initialize(limit_bps)
+          @mutex = Mutex.new
+          @start_clock = Fluent::Clock.now
+          @limit_bps = limit_bps
+          @flushed_bps = 0
+        end
+
+        def add(bytes)
+          now = Fluent::Clock.now?
+          @mutex.synchronize do
+            duration = @start_clock ? now - @start_clock : 0
+            if duration > 1.0
+              @start_clock = now
+              flushed_bps += bytes
+            else
+              flushed_bps = bytes
+            end
+            exceeded_without_lock?(lock: false)
+          end
+        end
+
+        def exceeded?
+          @mutex.synchronize do
+            exceeded_without_lock?
+          end
+        end
+
+        def next_clock
+          @mutex.synchronize do
+            if exceeded_without_lock?
+              @start_clock + 1.0
+            else
+              nil
+            end
+          end
+        end
+
+        private
+        def exceeded_without_lock?
+          if @limit_bps.nil?
+            false
+          else
+            flushed_bps > @limit_bps
+          end
+        end
       end
     end
   end
