@@ -1,3 +1,4 @@
+# coding: utf-8
 require_relative '../helper'
 
 # require 'fluent/command/fluentd'
@@ -1197,7 +1198,7 @@ CONF
       conf_path = create_conf_file('sample.conf', conf)
       assert File.exist?(conf_path)
       assert_log_matches(create_cmdline(conf_path, option),
-                         "[trace]",)
+                         "[trace]")
     end
 
     test 'warn' do
