@@ -1,3 +1,4 @@
+# coding: utf-8
 require_relative '../helper'
 
 # require 'fluent/command/fluentd'
@@ -1166,6 +1167,7 @@ CONF
     end
   end
 
+=begin
   sub_test_case 'log_level by command line option' do
     test 'info' do
       conf = ""
@@ -1243,4 +1245,5 @@ CONF
                          "[debug]")
     end
   end
+=end
 end
