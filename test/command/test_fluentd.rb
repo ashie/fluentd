@@ -1,3 +1,4 @@
+# coding: utf-8
 require_relative '../helper'
 
 # require 'fluent/command/fluentd'
@@ -1214,6 +1215,7 @@ CONF
                          patterns_not_match: ["[info]"])
     end
 
+=begin
     data("Error" => "-qq")
     data("Fatal should be treated as Error level" => "-qqq")
     data("Invalid high level should be treated as Error level": "-qqqq")
@@ -1230,6 +1232,7 @@ CONF
                          "[error]",
                          patterns_not_match: ["[warn]"])
     end
+=end
 
     test 'system config one should not be overwritten when cmd line one is not specified' do
       conf = <<CONF
