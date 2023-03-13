@@ -1167,7 +1167,6 @@ CONF
     end
   end
 
-=begin
   sub_test_case 'log_level by command line option' do
     test 'info' do
       conf = ""
@@ -1187,6 +1186,7 @@ CONF
                          patterns_not_match: ["[trace]"])
     end
 
+=begin
     data("Trace" => "-vv")
     data("Invalid low level should be treated as Trace level": "-vvv")
     test 'trace' do |option|
@@ -1201,6 +1201,7 @@ CONF
       assert_log_matches(create_cmdline(conf_path, option),
                          "[trace]",)
     end
+=end
 
     test 'warn' do
       conf = <<CONF
@@ -1245,5 +1246,4 @@ CONF
                          "[debug]")
     end
   end
-=end
 end
