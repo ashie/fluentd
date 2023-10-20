@@ -3084,6 +3084,7 @@ class TailInputTest < Test::Unit::TestCase
         sleep 3
 
         Fluent::FileWrapper.open("#{@tmp_dir}/tail.txt0", "ab") {|f| f.puts "file3 log2"}
+        sleep 3
       end
 
       inode_0 = tail_watchers[0]&.ino
