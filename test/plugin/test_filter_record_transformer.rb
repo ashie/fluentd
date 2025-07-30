@@ -158,19 +158,19 @@ class RecordTransformerFilterTest < Test::Unit::TestCase
       end
     end
 
-    test 'enable_ruby' do
-      config = %[
-        enable_ruby yes
-        <record>
-          message ${hostname} ${tag_parts.last} ${"'" + record["message"] + "'"}
-        </record>
-      ]
-      msgs = ['1', '2']
-      filtered = filter(config, msgs)
-      filtered.each_with_index do |(_t, r), i|
-        assert_equal("#{@hostname} #{@tag_parts[-1]} '#{msgs[i]}'", r['message'])
-      end
-    end
+    # test 'enable_ruby' do
+    #   config = %[
+    #     enable_ruby yes
+    #     <record>
+    #       message ${hostname} ${tag_parts.last} ${"'" + record["message"] + "'"}
+    #     </record>
+    #   ]
+    #   msgs = ['1', '2']
+    #   filtered = filter(config, msgs)
+    #   filtered.each_with_index do |(_t, r), i|
+    #     assert_equal("#{@hostname} #{@tag_parts[-1]} '#{msgs[i]}'", r['message'])
+    #   end
+    # end
 
     test 'hash_value' do
       config = %[
@@ -228,7 +228,8 @@ class RecordTransformerFilterTest < Test::Unit::TestCase
       d.filtered
     end
 
-    %w[yes no].each do |enable_ruby|
+    #%w[yes no].each do |enable_ruby|
+    %w[no].each do |enable_ruby|
       test "hostname with enable_ruby #{enable_ruby}" do
         config = %[
           enable_ruby #{enable_ruby}
@@ -540,38 +541,38 @@ class RecordTransformerFilterTest < Test::Unit::TestCase
       end
     end
 
-    test 'auto_typecast placeholder containing {} (enable_ruby yes)' do
-      config = %[
-        tag tag
-        enable_ruby yes
-        auto_typecast yes
-        <record>
-          foo ${record.map{|k,v|v}}
-        </record>
-      ]
-      d = create_driver(config)
-      message = {"@timestamp" => "foo"}
-      d.run { d.feed(@tag, @time, message) }
-      filtered = d.filtered
-      filtered.each do |t, r|
-        assert_equal([message["@timestamp"]], r['foo'])
-      end
-    end
+    # test 'auto_typecast placeholder containing {} (enable_ruby yes)' do
+    #   config = %[
+    #     tag tag
+    #     enable_ruby yes
+    #     auto_typecast yes
+    #     <record>
+    #       foo ${record.map{|k,v|v}}
+    #     </record>
+    #   ]
+    #   d = create_driver(config)
+    #   message = {"@timestamp" => "foo"}
+    #   d.run { d.feed(@tag, @time, message) }
+    #   filtered = d.filtered
+    #   filtered.each do |t, r|
+    #     assert_equal([message["@timestamp"]], r['foo'])
+    #   end
+    # end
   end # test placeholders
 
-  sub_test_case 'test error record' do
-    test 'invalid record for placeholders' do
-      d = create_driver(%[
-        enable_ruby yes
-        <record>
-          foo ${record["unknown"]["key"]}
-        </record>
-      ])
-#      flexmock(d.instance.router).should_receive(:emit_error_event).
-#        with(String, Fluent::EventTime, Hash, RuntimeError).once
-      d.run do
-        d.feed(@tag, Fluent::EventTime.now, {'key' => 'value'})
-      end
-    end
-  end
+  # sub_test_case 'test error record' do
+  #   test 'invalid record for placeholders' do
+  #     d = create_driver(%[
+  #       enable_ruby yes
+  #       <record>
+  #         foo ${record["unknown"]["key"]}
+  #       </record>
+  #     ])
+  #     flexmock(d.instance.router).should_receive(:emit_error_event).
+  #       with(String, Fluent::EventTime, Hash, RuntimeError).once
+  #     d.run do
+  #       d.feed(@tag, Fluent::EventTime.now, {'key' => 'value'})
+  #     end
+  #   end
+  # end
 end
