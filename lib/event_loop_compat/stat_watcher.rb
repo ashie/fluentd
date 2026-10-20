@@ -3,10 +3,17 @@
 # (libev ev_stat, which uses inotify on Linux when available).
 #
 # StatWatcher.new(path, interval) periodically stats the path and calls
-# on_change(prev, cur) when the attributes change, where prev / cur are
-# attribute hashes, or nil when the file does not exist. Like libev, a
-# watcher attached to an existing file fires once at startup with
-# prev = nil.
+# on_change(prev, cur) when the attributes change. prev / cur are
+# StatInfo structs with the same members as the one cool.io passes
+# (mtime, ctime, atime, dev, ino, mode, nlink, uid, guid, rdev, size,
+# blksize, blocks; "guid" carries the gid, as in cool.io). A missing
+# file is reported as a StatInfo with mode == 0, the documented libev
+# polling semantics (cool.io's inotify fast path on Linux instead
+# reports a removal with the last known attributes unchanged; we follow
+# the deterministic polling semantics so behavior does not depend on
+# the platform). Like libev, no callback is made at startup: the first
+# stat only seeds the baseline. Change detection compares all members
+# including ctime.
 #
 # This implementation works on every platform (including Windows, where
 # Coolio cannot use inotify), at the cost of detection latency bounded
@@ -20,6 +27,11 @@ module EventLoopCompat
   class StatWatcher < Watcher
     # Same "automatic" default as libev's ev_stat.
     DEFAULT_INTERVAL = 5.0
+
+    # Same name and member order as the cool.io C extension defines.
+    StatInfo = Struct.new(
+      :mtime, :ctime, :atime, :dev, :ino, :mode, :nlink,
+      :uid, :guid, :rdev, :size, :blksize, :blocks)
 
     attr_reader :path, :interval
 
@@ -43,14 +55,8 @@ module EventLoopCompat
     # watcher across runs or inflate the loop's watcher set.
     def __start_runtime__(loop)
       return if @handle
-      @last = stat_attrs
-      if @last
-        begin
-          on_change(nil, @last)
-        rescue => e
-          loop.__error__(self, e)
-        end
-      end
+      # Like libev, the first stat only seeds the baseline: no callback.
+      @last = stat_info
       @deadline = loop.timers.now + @interval
       schedule_next(loop)
     end
@@ -95,7 +101,7 @@ module EventLoopCompat
     end
 
     def check_stat
-      cur = stat_attrs
+      cur = stat_info
       return if cur == @last
       begin
         on_change(@last, cur)
@@ -105,19 +111,21 @@ module EventLoopCompat
       @last = cur
     end
 
-    def stat_attrs
+    def zero_stat_info
+      epoch = Time.at(0)
+      StatInfo.new(epoch, epoch, epoch, 0, 0, 0, 0, 0, 0, 0, 0, nil, nil)
+    end
+
+    def stat_info
       st = File.stat(@path)
-      {
-        size: st.size,
-        mtime: st.mtime.to_f,
-        mode: st.mode,
-        inode: st.ino,
-        nlink: st.nlink,
-        uid: st.uid,
-        gid: st.gid,
-      }
+      # cool.io 1.9.0 never fills blksize / blocks (its extension does
+      # not define HAVE_ST_BLKSIZE), so they stay nil here as well.
+      StatInfo.new(
+        st.mtime, st.ctime, st.atime, st.dev, st.ino, st.mode,
+        st.nlink, st.uid, st.gid, st.rdev, st.size,
+        nil, nil)
     rescue SystemCallError
-      nil
+      zero_stat_info
     end
   end
 end

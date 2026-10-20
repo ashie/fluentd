@@ -47,16 +47,13 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
     wd.attach(@loop)
     @loop.run
 
-    # one startup firing (prev nil) plus at least one change
-    assert_true(changes.size >= 2, "expected startup + change, got #{changes.size}")
-    startup_prev, startup_cur = changes.first
-    assert_nil(startup_prev)
-    assert_equal(3, startup_cur[:size])
-    change = changes.find { |(prev, _cur)| !prev.nil? }
-    assert_not_nil(change, "a change with a previous state must be reported")
-    last_prev, last_cur = change
-    assert_equal(3, last_prev[:size])
-    assert_equal("two-and-longer".bytesize, last_cur[:size])
+    # no startup firing (cool.io / libev only seeds the baseline),
+    # the first event is the rewrite change
+    assert_true(changes.size >= 1, "expected at least the rewrite change, got #{changes.size}")
+    first_prev, first_cur = changes.first
+    assert_not_equal(0, first_prev.mode, "no startup firing expected")
+    assert_equal(3, first_prev.size)
+    assert_equal("two-and-longer".bytesize, first_cur.size)
     assert_equal([], @errors.map { |e| e.class.name })
   end
 
@@ -72,9 +69,9 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
     wd.attach(@loop)
     @loop.run
 
-    appear = changes.find { |(prev, cur)| prev.nil? && !cur.nil? }
-    assert_not_nil(appear, "appearance must fire with prev nil")
-    removal = changes.find { |(_prev, cur)| cur.nil? }
+    appear = changes.find { |(prev, cur)| prev.mode.zero? && !cur.mode.zero? }
+    assert_not_nil(appear, "appearance must fire with a zeroed prev")
+    removal = changes.find { |(_prev, cur)| cur.mode.zero? }
     assert_not_nil(removal, "file removal must be detected")
     assert_equal([], @errors.map { |e| e.class.name })
   end
@@ -88,8 +85,8 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
     wd.attach(@loop)
     @loop.run
 
-    # only the startup firing, nothing more
-    assert_equal(1, changes)
+    # no startup firing and no change: no callback at all
+    assert_equal(0, changes)
     assert_equal([], @errors.map { |e| e.class.name })
   end
 
@@ -117,14 +114,21 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
     assert_equal([], @errors.map { |e| e.class.name })
   end
 
-  def test_self_detach_at_startup_exits_loop
+  # The loop must exit when the only watcher is detached from another
+  # thread: the detached watcher's internal timer must not keep it alive.
+  def test_detached_from_thread_exits_loop
     write_file("one")
-    sw = nil
-    sw = EventLoopCompat::StatWatcher.new(path, INTERVAL) { |_prev, _cur| sw.detach }
+    sw = EventLoopCompat::StatWatcher.new(path, INTERVAL) { |_prev, _cur| }
     sw.attach(@loop)
+    detacher = Thread.new do
+      sleep 0.15
+      sw.detach
+    end
     th = Thread.new { @loop.run }
     finished = !th.join(2).nil?
-    assert_true(finished, "loop must return when the only watcher detaches itself at startup")
+    detacher.join
+    assert_true(finished, "loop must return when the only watcher is detached")
     assert_false(sw.attached?)
+    assert_nil(sw.instance_variable_get(:@handle), "internal timer handle must be released")
   end
 end
