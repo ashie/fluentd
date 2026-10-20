@@ -1,8 +1,13 @@
 #
-# IOWatcher, compatible with the readable side of Coolio::IOWatcher:
-# IOWatcher.new(io, :r) and the on_readable callback. A block can be
-# given as a shortcut (block.call(self)), or subclasses can override
-# #on_readable. Only :r (readable) is implemented in this PoC.
+# IOWatcher, compatible with Coolio::IOWatcher: IOWatcher.new(io, flags)
+# where flags is :r, :w or :rw, and the on_readable / on_writable
+# callbacks. A block can be given as a shortcut for the single-event
+# form (block.call(self) with :r or :w), or subclasses can override the
+# callbacks.
+#
+# Note: the io-event selectors are level-triggered. A watcher waiting on
+# :w keeps firing while the socket is writable, so write interest should
+# be enabled only when there is data to write (see BufferedIO).
 #
 # Each attached watcher owns a Fiber which repeatedly calls
 # Selector#io_wait. The fiber is driven by the event loop; state changes
@@ -15,11 +20,23 @@ require 'event_loop_compat/watcher'
 
 module EventLoopCompat
   class IOWatcher < Watcher
+    FLAGS = {
+      r: IO::READABLE,
+      w: IO::WRITABLE,
+      rw: IO::READABLE | IO::WRITABLE,
+    }
+
     attr_reader :io
 
     def initialize(io, flags = :r, &callback)
-      raise ArgumentError, "only :r (readable) is supported" unless flags == :r
+      unless FLAGS.key?(flags)
+        raise ArgumentError, "unsupported flags: #{flags.inspect} (use :r, :w or :rw)"
+      end
+      if callback && flags == :rw
+        raise ArgumentError, "the block form supports :r or :w only"
+      end
       @io = io
+      @events_mask = FLAGS[flags]
       @callback = callback
       @fiber = nil
       @park_reader = nil
@@ -28,6 +45,10 @@ module EventLoopCompat
     end
 
     def on_readable
+      @callback.call(self) if @callback
+    end
+
+    def on_writable
       @callback.call(self) if @callback
     end
 
@@ -44,13 +65,22 @@ module EventLoopCompat
         begin
           while attached?
             if enabled?
-              events = selector.io_wait(Fiber.current, @io, IO::READABLE)
+              events = selector.io_wait(Fiber.current, @io, @events_mask)
               next unless events
               next unless attached? && enabled?
-              begin
-                on_readable
-              rescue => e
-                @loop.__error__(self, e) if @loop
+              if (events & IO::READABLE) != 0
+                begin
+                  on_readable
+                rescue => e
+                  @loop.__error__(self, e) if @loop
+                end
+              end
+              if (events & IO::WRITABLE) != 0
+                begin
+                  on_writable
+                rescue => e
+                  @loop.__error__(self, e) if @loop
+                end
               end
             else
               park(selector)
