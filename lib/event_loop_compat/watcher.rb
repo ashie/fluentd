@@ -48,6 +48,9 @@ module EventLoopCompat
       @enabled && !@loop.nil?
     end
 
+    # Coolio-compatible name for the loop accessor
+    alias evloop loop
+
     # internal hooks, not part of the Coolio-compatible API
 
     def __attached__(loop)

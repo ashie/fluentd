@@ -61,6 +61,9 @@ module EventLoopCompat
     end
 
     def attach(watcher)
+      unless watcher.respond_to?(:__attached__)
+        raise ArgumentError, "#{watcher.class} is not an EventLoopCompat watcher (was cool.io used with the io-event backend?)"
+      end
       synchronize do
         return self if @watchers.include?(watcher)
         @watchers << watcher

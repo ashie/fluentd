@@ -52,6 +52,18 @@ module EventLoopCompat
       @callback.call(self) if @callback
     end
 
+    # Detach and close the underlying io. Coolio::IOWatcher has no such
+    # method, but Coolio::IO#close and Coolio::Listener#close provide the
+    # equivalent behavior for the classes used by Fluentd; this is the
+    # shared implementation for direct IOWatcher users (UDPServer).
+    def close
+      detach if attached?
+      begin
+        @io.close unless @io.closed?
+      rescue IOError, Errno::EBADF
+      end
+    end
+
     def __start_runtime__(loop)
       if @fiber
         # The fiber exists but is parked because it was disabled.
