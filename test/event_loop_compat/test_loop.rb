@@ -12,6 +12,22 @@ require 'socket'
 
 require 'event_loop_compat'
 
+# Raises EINTR on the first write_nonblock, then delegates.
+class EINTROnceWriter
+  def initialize(io)
+    @io = io
+    @raised = false
+  end
+
+  def write_nonblock(string, exception: true)
+    unless @raised
+      @raised = true
+      raise Errno::EINTR
+    end
+    @io.write_nonblock(string, exception: exception)
+  end
+end
+
 class EventLoopCompatTest < Test::Unit::TestCase
   WATCHDOG_SECONDS = 1.5
 
@@ -324,6 +340,21 @@ class EventLoopCompatTest < Test::Unit::TestCase
     assert_true(finished, "loop must not hang when the self-pipe fills up: #{err.inspect}")
     assert_true(done, "callback must have completed")
     assert_equal([], @errors.map { |e| e.class.name })
+  end
+
+  # Regression: EINTR means nothing was written, so notify must retry
+  # instead of treating the write as done. An empty self-pipe would
+  # leave the loop blocked in select() with no pending notification.
+  def test_notify_retries_write_on_eintr
+    reader, writer = IO.pipe
+    @loop.instance_variable_set(:@notify_writer, EINTROnceWriter.new(writer))
+    @loop.send(:notify)
+    assert_equal(".", reader.read_nonblock(1), "EINTR must be retried, not treated as notified")
+  rescue Errno::EAGAIN
+    flunk("notify wrote nothing after EINTR")
+  ensure
+    reader.close rescue nil
+    writer.close rescue nil
   end
 
   def test_run_returns_when_all_watchers_detached

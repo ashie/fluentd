@@ -241,14 +241,17 @@ module EventLoopCompat
     # until the control fiber drains it, so it cannot be lost between
     # queueing and the loop entering select. The write must never
     # block: a full pipe already holds unread bytes, which is itself a
-    # pending notification, so skipping the write is safe.
+    # pending notification, so skipping the write is safe. EINTR means
+    # nothing was written, so it must be retried.
     def notify
       writer = @notify_writer
       return unless writer
       begin
-        writer.write_nonblock(".", exception: false)
-      rescue Errno::EAGAIN, Errno::EINTR
-        # already notified
+        writer.write_nonblock(".")
+      rescue Errno::EAGAIN
+        # pipe is full: unread bytes are already pending
+      rescue Errno::EINTR
+        retry
       rescue IOError
         # pipe closed while the loop was shutting down
       end
