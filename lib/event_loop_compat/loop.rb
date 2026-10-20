@@ -115,12 +115,20 @@ module EventLoopCompat
       @stop_requested = false
 
       begin
+        # Watchers whose runtime (fiber / timer handle) was started during
+        # this run. Detached watchers leave @watchers, so they must be
+        # tracked separately to release their resources on exit.
+        runtimes = []
+
         initial.each do |w|
-          w.__start_runtime__(self) if w.attached? && w.enabled?
+          if w.attached? && w.enabled?
+            w.__start_runtime__(self)
+            runtimes << w
+          end
         end
 
         while !@stop_requested && active_count > 0
-          process_commands
+          process_commands(runtimes)
           duration = run_duration(timeout)
           @selector.select(duration)
           @timers.fire
@@ -134,7 +142,8 @@ module EventLoopCompat
         end
         @selector = nil
         @loop_thread = nil
-        synchronize { @watchers.dup }.each do |w|
+        watchers = synchronize { @watchers.dup }
+        (watchers + (runtimes || [])).uniq.each do |w|
           w.__run_finished__
         end
       end
@@ -187,7 +196,7 @@ module EventLoopCompat
       @selector.wakeup if @selector && !on_loop_thread?
     end
 
-    def process_commands
+    def process_commands(runtimes)
       until @commands.empty?
         command = begin
           @commands.pop(true)
@@ -197,7 +206,10 @@ module EventLoopCompat
         kind, watcher = command
         case kind
         when :start_runtime
-          watcher.__start_runtime__(self) if watcher.attached? && watcher.enabled?
+          if watcher.attached? && watcher.enabled?
+            watcher.__start_runtime__(self)
+            runtimes << watcher unless runtimes.include?(watcher)
+          end
         when :stop_runtime
           watcher.__stop_runtime__(self)
         end
