@@ -9,3 +9,5 @@
 require 'event_loop_compat/loop'
 require 'event_loop_compat/timer_watcher'
 require 'event_loop_compat/io_watcher'
+require 'event_loop_compat/buffered_io'
+require 'event_loop_compat/stat_watcher'
