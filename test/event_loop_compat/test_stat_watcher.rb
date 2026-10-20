@@ -99,4 +99,32 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
     sw2 = EventLoopCompat::StatWatcher.new(path, 0)
     assert_equal(EventLoopCompat::StatWatcher::DEFAULT_INTERVAL, sw2.interval)
   end
+
+  # Regression: the internal polling timer is owned by the watcher and
+  # must not survive as a loop watcher across runs.
+  def test_internal_timer_does_not_accumulate_across_runs
+    write_file("one")
+    sw = EventLoopCompat::StatWatcher.new(path, INTERVAL) { |_prev, _cur| }
+    sw.attach(@loop)
+    3.times do
+      wd = EventLoopCompat::TimerWatcher.new(0.1) { @loop.stop }
+      wd.attach(@loop)
+      @loop.run
+      wd.detach
+      assert_equal(1, @loop.watchers.size, "loop watcher set must not grow across runs")
+      assert_nil(sw.instance_variable_get(:@handle), "internal timer handle must be released")
+    end
+    assert_equal([], @errors.map { |e| e.class.name })
+  end
+
+  def test_self_detach_at_startup_exits_loop
+    write_file("one")
+    sw = nil
+    sw = EventLoopCompat::StatWatcher.new(path, INTERVAL) { |_prev, _cur| sw.detach }
+    sw.attach(@loop)
+    th = Thread.new { @loop.run }
+    finished = !th.join(2).nil?
+    assert_true(finished, "loop must return when the only watcher detaches itself at startup")
+    assert_false(sw.attached?)
+  end
 end

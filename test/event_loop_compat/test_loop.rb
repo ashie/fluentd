@@ -308,6 +308,51 @@ class EventLoopCompatTest < Test::Unit::TestCase
     assert_operator(fired, :>=, 2, "watcher attached from another thread must run")
   end
 
+  # Regression: a command queued while the loop is between process_commands
+  # and select() must never be lost. The loop has no timers, so it blocks
+  # in select forever; only a persistent notification can wake it.
+  def test_cross_thread_attach_stress_while_blocked_forever
+    sock1, sock2 = UNIXSocket.pair
+    io = EventLoopCompat::IOWatcher.new(sock1) { sock1.read(1) }
+    io.attach(@loop)
+    rounds = 100
+    fired = 0
+    attacher = Thread.new do
+      rounds.times do
+        sock2.write("x")
+        tw = EventLoopCompat::TimerWatcher.new(0.01) { fired += 1 }
+        tw.attach(@loop)
+      end
+    end
+    run_with_watchdog(@loop, 2.0)
+    attacher.join
+    assert_equal(rounds, fired, "every timer attached from another thread must fire (lost wakeup?)")
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  # Regression: after commands remove the last watcher, the loop must not
+  # enter select again.
+  def test_run_returns_when_last_watcher_detached_from_thread
+    sock1, sock2 = UNIXSocket.pair
+    io = EventLoopCompat::IOWatcher.new(sock1) { }
+    io.attach(@loop)
+    detacher = Thread.new do
+      sleep 0.15
+      io.detach
+    end
+    started = monotonic
+    finished, err = run_in_thread(@loop)
+    detacher.join
+    elapsed = monotonic - started
+    assert_true(finished, "loop must return when the last watcher is detached: #{err.inspect}")
+    assert_operator(elapsed, :<, 1.0, "loop must return promptly after the last detach")
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
   #
   # error handling
   #

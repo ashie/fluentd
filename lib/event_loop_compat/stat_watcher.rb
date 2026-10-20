@@ -14,7 +14,7 @@
 # about 5 seconds in libev) is kept as the default here as well.
 #
 
-require 'event_loop_compat/timer_watcher'
+require 'event_loop_compat/watcher'
 
 module EventLoopCompat
   class StatWatcher < Watcher
@@ -28,7 +28,8 @@ module EventLoopCompat
       @path = path
       @interval = interval == 0 ? DEFAULT_INTERVAL : interval
       @callback = callback
-      @timer = nil
+      @handle = nil
+      @deadline = nil
       @last = nil
       super()
     end
@@ -37,8 +38,11 @@ module EventLoopCompat
       @callback.call(prev, cur) if @callback
     end
 
+    # The polling timer is owned directly by this watcher (not attached
+    # to the Loop as a separate watcher), so it cannot outlive the
+    # watcher across runs or inflate the loop's watcher set.
     def __start_runtime__(loop)
-      return if @timer
+      return if @handle
       @last = stat_attrs
       if @last
         begin
@@ -47,22 +51,48 @@ module EventLoopCompat
           loop.__error__(self, e)
         end
       end
-      @timer = TimerWatcher.new(@interval, true) { check_stat }
-      @timer.attach(loop)
+      @deadline = loop.timers.now + @interval
+      schedule_next(loop)
     end
 
     def __stop_runtime__(loop)
-      timer = @timer
-      @timer = nil
-      loop.detach(timer) if timer
+      cancel_handle
     end
 
     def __run_finished__
-      @timer = nil
+      cancel_handle
+      @deadline = nil
       @last = nil
     end
 
     private
+
+    def schedule_next(loop)
+      @handle = loop.timers.schedule(@deadline, method(:fire_check))
+    end
+
+    def cancel_handle
+      @handle.cancel! if @handle
+      @handle = nil
+    end
+
+    def fire_check(now)
+      @handle = nil
+      return unless enabled?
+
+      begin
+        check_stat
+      rescue => e
+        @loop.__error__(self, e) if @loop
+      end
+
+      if enabled?
+        @deadline += @interval
+        # Do not try to catch up missed firings after a long stall.
+        @deadline = now + @interval if @deadline <= now
+        schedule_next(@loop)
+      end
+    end
 
     def check_stat
       cur = stat_attrs

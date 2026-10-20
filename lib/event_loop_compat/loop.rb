@@ -10,8 +10,10 @@
 #
 # All selector / fiber / timer operations are executed on the event loop
 # thread. Watcher operations issued from other threads are queued and
-# applied by the event loop thread after waking it up with
-# IO::Event::Selector#wakeup.
+# applied by the event loop thread. The queue is drained by a control
+# fiber parked on a self-pipe, so a command queued just before the loop
+# enters select is never lost (Selector#wakeup alone would be, because
+# it is a no-op when the loop is not blocked yet).
 #
 
 require 'io/event'
@@ -39,6 +41,10 @@ module EventLoopCompat
       @loop_thread = nil
       @running = false
       @stop_requested = false
+
+      @notify_reader = nil
+      @notify_writer = nil
+      @control = nil
     end
 
     def timers
@@ -120,6 +126,27 @@ module EventLoopCompat
         # tracked separately to release their resources on exit.
         runtimes = []
 
+        # Self-pipe + control fiber: commands queued from other threads
+        # make the read end readable, which is persistent state that
+        # select() always observes, unlike Selector#wakeup.
+        @notify_reader, @notify_writer = IO.pipe
+        @control = Fiber.new do
+          loop do
+            events = @selector.io_wait(Fiber.current, @notify_reader, IO::READABLE)
+            next unless events
+            begin
+              @notify_reader.read_nonblock(64)
+            rescue IO::WaitReadable, EOFError
+            end
+            begin
+              process_commands(runtimes)
+            rescue => e
+              __error__(nil, e)
+            end
+          end
+        end
+        @control.transfer # parks the control fiber in io_wait
+
         initial.each do |w|
           if w.attached? && w.enabled?
             w.__start_runtime__(self)
@@ -129,6 +156,9 @@ module EventLoopCompat
 
         while !@stop_requested && active_count > 0
           process_commands(runtimes)
+          # Commands processed above may have removed the last watcher,
+          # so re-check before blocking in select.
+          break if @stop_requested || active_count == 0
           duration = run_duration(timeout)
           @selector.select(duration)
           @timers.fire
@@ -142,6 +172,14 @@ module EventLoopCompat
         end
         @selector = nil
         @loop_thread = nil
+        @control = nil
+        begin
+          @notify_writer.close if @notify_writer
+          @notify_reader.close if @notify_reader
+        rescue
+        end
+        @notify_writer = nil
+        @notify_reader = nil
         watchers = synchronize { @watchers.dup }
         (watchers + (runtimes || [])).uniq.each do |w|
           w.__run_finished__
@@ -191,8 +229,15 @@ module EventLoopCompat
 
     def defer(command)
       @commands << command
-      # Wake up the loop only when it can actually be blocked in select.
-      # Selector#wakeup is a no-op when the loop is not blocked.
+      # The self-pipe write is the reliable notification: it persists
+      # until the control fiber drains it, so it cannot be lost between
+      # command queueing and the loop entering select. wakeup is kept as
+      # a best-effort shortcut for the common case of blocking select.
+      begin
+        @notify_writer.write(".") if @notify_writer
+      rescue IOError
+        # pipe closed while the loop was shutting down
+      end
       @selector.wakeup if @selector && !on_loop_thread?
     end
 
