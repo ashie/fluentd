@@ -14,13 +14,27 @@
 #    limitations under the License.
 #
 
-require 'cool.io'
 require 'fluent/plugin_helper/thread'
 require 'fluent/clock'
+
+# PoC feature flag: FLUENTD_EVENT_LOOP_BACKEND=io_event_compat switches
+# the event loop implementation to the EventLoopCompat layer built on
+# top of the io-event gem. Note that other helpers still use Coolio
+# watchers (server, counter), so this backend works only for plugins
+# which use the event_loop / timer helpers.
 
 module Fluent
   module PluginHelper
     module EventLoop
+      EVENT_LOOP_BACKEND =
+        if ENV['FLUENTD_EVENT_LOOP_BACKEND'] == 'io_event_compat'
+          require 'event_loop_compat'
+          :io_event_compat
+        else
+          require 'cool.io'
+          :coolio
+        end
+
       # Currently this plugin helper is only for other helpers, not plugins.
       # there's no way to create customized watchers to attach event loops.
       include Fluent::PluginHelper::Thread
@@ -73,7 +87,7 @@ module Fluent
 
       def initialize
         super
-        @_event_loop = Coolio::Loop.new
+        @_event_loop = new_event_loop
         @_event_loop_running = false
         @_event_loop_mutex = Mutex.new
         # plugin MAY configure loop run timeout in #configure
@@ -87,7 +101,7 @@ module Fluent
         # event loop does not run here, so mutex lock is not required
         thread_create :event_loop do
           begin
-            default_watcher = DefaultWatcher.new
+            default_watcher = new_default_watcher
             event_loop_attach(default_watcher)
             @_event_loop_running = true
             @_event_loop.run(@_event_loop_run_timeout) # this method blocks
@@ -158,12 +172,42 @@ module Fluent
       end
 
       # watcher to block to run event loop until shutdown
-      class DefaultWatcher < Coolio::TimerWatcher
-        def initialize
-          super(1, true) # interval: 1, repeat: true
+      if EVENT_LOOP_BACKEND == :io_event_compat
+        class DefaultWatcher < EventLoopCompat::TimerWatcher
+          def initialize
+            super(1, true) # interval: 1, repeat: true
+          end
+          # do nothing
+          def on_timer; end
         end
-        # do nothing
-        def on_timer; end
+      else
+        class DefaultWatcher < Coolio::TimerWatcher
+          def initialize
+            super(1, true) # interval: 1, repeat: true
+          end
+          # do nothing
+          def on_timer; end
+        end
+      end
+
+      private
+
+      def new_event_loop
+        if EVENT_LOOP_BACKEND == :io_event_compat
+          EventLoopCompat::Loop.new(error_handler: ->(_watcher, error) {
+            begin
+              log.error "Unexpected error raised in event loop watcher", error: error
+            rescue
+              # log may not be available
+            end
+          })
+        else
+          Coolio::Loop.new
+        end
+      end
+
+      def new_default_watcher
+        DefaultWatcher.new
       end
     end
   end

@@ -65,7 +65,13 @@ module Fluent
         @_timers = nil
       end
 
-      class TimerWatcher < Coolio::TimerWatcher
+      class TimerWatcher < (
+        if EventLoop::EVENT_LOOP_BACKEND == :io_event_compat
+          EventLoopCompat::TimerWatcher
+        else
+          Coolio::TimerWatcher
+        end
+      )
         def initialize(title, interval, repeat, log, checker, detacher, &callback)
           @title = title
           @callback = callback
