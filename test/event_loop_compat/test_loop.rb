@@ -283,6 +283,49 @@ class EventLoopCompatTest < Test::Unit::TestCase
     assert_false(@loop.stop, "second stop must be safe and return false")
   end
 
+  # Regression: a stop request queued just before the loop enters
+  # select() with no timer or IO to wake it must still be observed.
+  def test_stop_just_before_blocking_is_observed
+    sock1, sock2 = UNIXSocket.pair
+    io = EventLoopCompat::IOWatcher.new(sock1) { sock1.read(1) }
+    io.attach(@loop)
+    stopper = Thread.new do
+      sleep 0.15
+      @loop.stop
+    end
+    started = monotonic
+    finished, err = run_in_thread(@loop)
+    stopper.join
+    elapsed = monotonic - started
+    assert_true(finished, "loop must return when stopped with no other events: #{err.inspect}")
+    assert_operator(elapsed, :<, 1.0, "loop must return promptly after stop")
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  # Regression: the self-pipe notification must never block the event
+  # loop thread. A callback that toggles enable/disable many times fills
+  # the pipe; a full pipe already means "notified", so it must not hang.
+  def test_self_pipe_full_does_not_block_loop
+    tw = nil
+    iterations = 40_000
+    done = false
+    tw = EventLoopCompat::TimerWatcher.new(0.01, true) do
+      iterations.times do
+        tw.disable
+        tw.enable
+      end
+      done = true
+      @loop.stop
+    end
+    tw.attach(@loop)
+    finished, err = run_in_thread(@loop, 10)
+    assert_true(finished, "loop must not hang when the self-pipe fills up: #{err.inspect}")
+    assert_true(done, "callback must have completed")
+    assert_equal([], @errors.map { |e| e.class.name })
+  end
+
   def test_run_returns_when_all_watchers_detached
     tw = nil
     tw = EventLoopCompat::TimerWatcher.new(0.05, true) do |watcher|

@@ -195,6 +195,10 @@ module EventLoopCompat
     def stop
       return false unless @running
       @stop_requested = true
+      # The stop request is a persistent flag, but the loop may be about
+      # to enter select() without any timer or IO to wake it. Notify the
+      # control fiber through the self-pipe so the flag is observed.
+      notify
       @selector.wakeup if @selector
       true
     end
@@ -229,16 +233,25 @@ module EventLoopCompat
 
     def defer(command)
       @commands << command
-      # The self-pipe write is the reliable notification: it persists
-      # until the control fiber drains it, so it cannot be lost between
-      # command queueing and the loop entering select. wakeup is kept as
-      # a best-effort shortcut for the common case of blocking select.
+      notify
+      @selector.wakeup if @selector && !on_loop_thread?
+    end
+
+    # The self-pipe write is the reliable notification: it persists
+    # until the control fiber drains it, so it cannot be lost between
+    # queueing and the loop entering select. The write must never
+    # block: a full pipe already holds unread bytes, which is itself a
+    # pending notification, so skipping the write is safe.
+    def notify
+      writer = @notify_writer
+      return unless writer
       begin
-        @notify_writer.write(".") if @notify_writer
+        writer.write_nonblock(".", exception: false)
+      rescue Errno::EAGAIN, Errno::EINTR
+        # already notified
       rescue IOError
         # pipe closed while the loop was shutting down
       end
-      @selector.wakeup if @selector && !on_loop_thread?
     end
 
     def process_commands(runtimes)
