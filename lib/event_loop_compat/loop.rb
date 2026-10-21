@@ -39,6 +39,7 @@ module EventLoopCompat
 
       @selector = nil
       @loop_thread = nil
+      @drive_thread = nil
       @running = false
       @stop_requested = false
 
@@ -155,6 +156,9 @@ module EventLoopCompat
     # enabled, like Coolio.
     def run(timeout = nil)
       raise "loop already running" if @running
+      # A selector left over from run_once mode belongs to the thread
+      # that drove it and must not be reused here.
+      discard_idle_selector
 
       initial = synchronize { @watchers.dup }
       raise RuntimeError, "no watchers for this loop" if initial.empty?
@@ -236,13 +240,19 @@ module EventLoopCompat
     # Same meaning as Coolio::Loop#run_once: run one iteration of the
     # event loop, processing the events that are ready and blocking at
     # most +timeout+ seconds. The counter client uses this to drive its
-    # connection from its own thread without running the loop. Like
-    # libev, the loop is not thread-safe: all run_once calls of one
-    # loop must come from the same thread (the counter client
-    # serializes them with a mutex).
+    # connection from its own thread without running the loop. The
+    # counter client may call it from different threads (the mutex only
+    # serializes the calls), so when the calling thread changed since
+    # the previous call the selector and the watcher fibers of the
+    # previous thread are discarded and rebuilt here: io-event fibers
+    # cannot be resumed from another thread.
     def run_once(timeout = nil)
       raise "loop is running" if @running
+      if @selector && !Thread.current.equal?(@drive_thread)
+        discard_idle_selector
+      end
       @selector ||= IO::Event::Selector.new(Fiber.current)
+      @drive_thread = Thread.current
       @loop_thread = Thread.current
       begin
         synchronize { @watchers.dup }.each do |w|
@@ -290,6 +300,28 @@ module EventLoopCompat
 
     def composite_watcher?(watcher)
       !watcher.respond_to?(:__attached__) && watcher.respond_to?(:attach) && watcher.respond_to?(:attached?)
+    end
+
+    # Discard the selector and the watcher runtimes built in run_once
+    # mode. They belong to the thread that created them (io-event
+    # fibers cannot cross threads), so they must not be reused by a
+    # later run() or by run_once from another thread. The watchers
+    # themselves stay attached and are started again on the new
+    # driving thread.
+    def discard_idle_selector
+      return unless @selector
+      (@started.keys + @idle_runtimes).uniq.each do |w|
+        w.__discard_runtime__
+      end
+      @started.clear
+      @idle_runtimes.clear
+      begin
+        @selector.close
+      rescue => e
+        __error__(nil, e)
+      end
+      @selector = nil
+      @drive_thread = nil
     end
 
     def synchronize(&block)

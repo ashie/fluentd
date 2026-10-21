@@ -77,6 +77,13 @@ module EventLoopCompat
     def __stop_runtime__(loop)
     end
 
+    # Tear down the runtime (fiber / handle) without the loop
+    # machinery, because the thread that drove it is gone: io-event
+    # fibers are bound to the thread that created them. Only called
+    # while the loop is not running.
+    def __discard_runtime__
+    end
+
     def __run_finished__
     end
   end

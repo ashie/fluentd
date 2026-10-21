@@ -428,6 +428,67 @@ class EventLoopCompatTest < Test::Unit::TestCase
   end
 
   #
+  # run_once (counter client mode)
+  #
+
+  def test_run_once_delivers_io_events
+    sock1, sock2 = UNIXSocket.pair
+    received = []
+    w = EventLoopCompat::IOWatcher.new(sock1) { received << w.io.read_nonblock(100) }
+    w.attach(@loop)
+    sock2.write("hello")
+    @loop.run_once(0.5)
+    assert_equal(["hello"], received)
+    w.detach
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  # io-event fibers are bound to the thread that created them. The
+  # counter client may call run_once from different threads (its mutex
+  # only serializes the calls), so the selector and the watcher fibers
+  # must be rebuilt on the new thread instead of raising FiberError.
+  def test_run_once_from_another_thread_rebuilds_runtimes
+    sock1, sock2 = UNIXSocket.pair
+    received = []
+    w = EventLoopCompat::IOWatcher.new(sock1) { received << w.io.read_nonblock(100) }
+    w.attach(@loop)
+
+    @loop.run_once(0.01) # creates the selector and the fiber here
+    sock2.write("first")
+    th = Thread.new { @loop.run_once(0.5) }
+    th.join(5)
+    assert_equal(["first"], received)
+
+    sock2.write("second")
+    th2 = Thread.new { @loop.run_once(0.5) }
+    th2.join(5)
+    assert_equal(["first", "second"], received)
+    w.detach
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  # A run() after run_once mode must not reuse the selector or the
+  # fibers left over from run_once mode.
+  def test_run_after_run_once_starts_fresh_runtimes
+    sock1, sock2 = UNIXSocket.pair
+    received = []
+    w = EventLoopCompat::IOWatcher.new(sock1) { received << w.io.read_nonblock(100) }
+    w.attach(@loop)
+    @loop.run_once(0.01)
+    sock2.write("hello")
+    run_with_watchdog(@loop, 0.5)
+    assert_equal(["hello"], received)
+    assert_equal([], @errors.map { |e| e.class.name })
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  #
   # error handling
   #
 

@@ -144,6 +144,18 @@ module EventLoopCompat
       end
     end
 
+    # The selector that drove this fiber is being discarded (run_once
+    # is called from another thread, or run() follows run_once mode).
+    # A fiber suspended in io_wait cannot be resumed or closed from
+    # another thread, so it is abandoned here: the watcher drops its
+    # reference, and the fiber together with the old selector becomes
+    # garbage. The watcher is started again on the new driving thread.
+    def __discard_runtime__
+      @fiber = nil
+      close_park
+      close_io if @close_requested
+    end
+
     def __run_finished__
       # The selector is closed: every fiber of this run is dead.
       @fiber = nil
