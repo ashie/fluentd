@@ -24,7 +24,7 @@ require 'resolv'
 require 'event_loop_compat/buffered_io'
 
 module EventLoopCompat
-  WINDOWS = RUBY_PLATFORM =~ /mingw|mswin/ ? true : false
+  WINDOWS = RUBY_PLATFORM.match?(/mingw|mswin/)
 
   DEFAULT_BACKLOG = 1024
 
