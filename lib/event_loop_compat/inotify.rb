@@ -33,7 +33,7 @@ module EventLoopCompat
     IN_MOVE_SELF = 0x00000800
     IN_Q_OVERFLOW = 0x00004000
     IN_IGNORED = 0x00008000
-    IN_ONLYDIR = 0x00100000
+    IN_ONLYDIR = 0x01000000
     # inotify_init1 flags (O_NONBLOCK / O_CLOEXEC)
     IN_NONBLOCK = 0x00000800
     IN_CLOEXEC = 0x00080000
@@ -80,6 +80,11 @@ module EventLoopCompat
 
     def closed?
       @io.nil? || @io.closed?
+    end
+
+    # True when no watch is registered on this instance.
+    def empty?
+      @mutex.synchronize { @refs.empty? }
     end
 
     # Registers path for watcher and returns the watch descriptor, or
@@ -180,8 +185,14 @@ module EventLoopCompat
         if (mask & IN_IGNORED) != 0
           # The kernel dropped the watch (file removed, moved away or
           # rm_watch'ed); watchers clear their reference and re-add it
-          # when their path exists again.
-          @mutex.synchronize { drop_wd(wd) }
+          # when their path exists again. When this was the last watch,
+          # close the instance so no fd and no loop watcher is left
+          # behind: the watchers will get a fresh instance from the
+          # loop when they re-add a watch.
+          @mutex.synchronize do
+            drop_wd(wd)
+            close if @refs.empty?
+          end
         end
         next if handlers.nil? || handlers.empty?
         handlers.dup.each do |watcher|

@@ -211,6 +211,59 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
     assert_equal([], @errors.map { |e| e.class.name })
   end
 
+  # The parent directory watch must detect the creation of a file that
+  # did not exist when the watch started (regression: a wrong
+  # IN_ONLYDIR value made inotify_add_watch fail with EINVAL, leaving
+  # only the polling fallback).
+  def test_inotify_fast_path_detects_appearance_of_missing_file
+    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
+
+    changes = []
+    sw = EventLoopCompat::StatWatcher.new(path, 30.0) { |prev, cur| changes << [prev, cur] }
+    sw.attach(@loop)
+    creator = EventLoopCompat::TimerWatcher.new(0.2) { write_file("created") }
+    creator.attach(@loop)
+    wd = EventLoopCompat::TimerWatcher.new(1.0) { @loop.stop }
+    wd.attach(@loop)
+    @loop.run
+
+    appear = changes.find { |(prev, cur)| prev.mode.zero? && !cur.mode.zero? }
+    assert_not_nil(appear, "the directory watch must detect creation long before the 30s interval")
+    assert_equal("created".bytesize, appear.last.size)
+    assert_equal([], @errors.map { |e| e.class.name })
+  end
+
+  # When the kernel drops the last watch of the shared instance (the
+  # watched file and its parent directory are removed), the instance
+  # must close itself: no inotify fd and no loop watcher may be left
+  # behind while the loop keeps running.
+  def test_inotify_instance_is_closed_when_kernel_drops_last_watch
+    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
+    skip "requires /proc/self/fd" unless File.directory?("/proc/self/fd")
+
+    write_file("one")
+    baseline = inotify_fd_count
+    sw = EventLoopCompat::StatWatcher.new(path, 30.0) { |_prev, _cur| }
+    sw.attach(@loop)
+    deleter = EventLoopCompat::TimerWatcher.new(0.2) do
+      File.delete(path)
+      Dir.rmdir(@dir)
+      @dir = nil
+    end
+    deleter.attach(@loop)
+    counts = []
+    checker = EventLoopCompat::TimerWatcher.new(0.5) { counts << inotify_fd_count }
+    checker.attach(@loop)
+    wd = EventLoopCompat::TimerWatcher.new(1.0) { @loop.stop }
+    wd.attach(@loop)
+    @loop.run
+
+    assert_equal(baseline, counts.last,
+                 "the shared inotify fd must be closed when the kernel dropped the last watch")
+    assert_nil(@loop.instance_variable_get(:@inotify), "the loop must drop the closed instance")
+    assert_equal([], @errors.map { |e| e.class.name })
+  end
+
   def inotify_fd_count
     Dir.children("/proc/self/fd").count do |name|
       begin

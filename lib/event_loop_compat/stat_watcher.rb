@@ -192,7 +192,14 @@ module EventLoopCompat
     end
 
     def update_watches
-      return if @inotify.nil? || @inotify.closed?
+      if @inotify.nil? || @inotify.closed?
+        # The shared instance closed itself when the kernel dropped the
+        # last watch (or on the previous stop): get a fresh one.
+        @wd_file = nil
+        @wd_dir = nil
+        @inotify = @loop && @loop.inotify
+      end
+      return unless @inotify
 
       if @wd_dir.nil?
         @wd_dir = @inotify.add_watch(self, File.dirname(@path), Inotify::DIR_WATCH_MASK)
@@ -205,6 +212,14 @@ module EventLoopCompat
       elsif @wd_file
         @inotify.remove_watch(self, @wd_file)
         @wd_file = nil
+      end
+
+      # Nothing could be registered (the parent directory is gone and
+      # so on): do not keep the shared instance open for a watcher with
+      # no watch; the polling timer is the fallback.
+      if @inotify.empty?
+        @inotify.close
+        @inotify = nil
       end
     end
   end
