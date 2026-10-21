@@ -17,9 +17,11 @@ module EventLoopCompat
 
     def initialize(interval, repeats = false, &callback)
       interval = interval.to_f
-      raise ArgumentError, "interval must be a positive number" unless interval > 0
+      # libev (and therefore cool.io) accepts interval 0: the timer
+      # fires as soon as possible, and repeat == 0 means one-shot.
+      raise ArgumentError, "interval must not be negative" unless interval >= 0
       @interval = interval
-      @repeats = repeats
+      @repeats = repeats && interval > 0
       @callback = callback
       @handle = nil
       @deadline = nil
