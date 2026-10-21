@@ -19,11 +19,10 @@ require 'fluent/clock'
 
 # PoC feature flag: FLUENTD_EVENT_LOOP_BACKEND=io_event_compat switches
 # the event loop implementation to the EventLoopCompat layer built on
-# top of the io-event gem. The helpers and bundled plugins that use an
-# event loop (event_loop, timer, server, counter, in_tail, in_unix,
-# in_http, sd_file) follow this flag. The legacy inputs in
-# fluent/compat (in_tcp, in_udp, in_syslog via compat/socket_util)
-# still use Coolio directly.
+# top of the io-event gem. Everything that uses an event loop (the
+# event_loop, timer, server and counter helpers, the bundled plugins,
+# and the legacy fluent/compat/socket_util API) follows this flag;
+# cool.io is not loaded at all with the io_event_compat backend.
 
 module Fluent
   module PluginHelper
