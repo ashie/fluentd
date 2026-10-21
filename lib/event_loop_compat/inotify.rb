@@ -134,9 +134,14 @@ module EventLoopCompat
 
     def close
       return if closed?
-      @watcher.close
+      watcher = @watcher
       @watcher = nil
-      @io.close
+      # Let IOWatcher#close decide when the fd may be closed: when the
+      # last watch is removed from another watcher's callback, the
+      # inotify fiber is still registered in the selector, and the fd
+      # close must be deferred to the fiber exit (older io-event
+      # versions crashed when select() saw a closed registered fd).
+      watcher.close
       @io = nil
       @handlers.clear
       @refs.clear

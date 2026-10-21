@@ -264,6 +264,32 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
     assert_equal([], @errors.map { |e| e.class.name })
   end
 
+  # Removing the last watch from another watcher's callback must not
+  # close the inotify fd while the inotify fiber is still registered
+  # in the selector (io-event raises on that): the fd close must be
+  # deferred to the fiber exit, as IOWatcher#close intends.
+  def test_last_watch_removed_from_a_callback_closes_fd_safely
+    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
+    skip "requires /proc/self/fd" unless File.directory?("/proc/self/fd")
+
+    write_file("one")
+    baseline = inotify_fd_count
+    sw = EventLoopCompat::StatWatcher.new(path, 30.0) { |_prev, _cur| }
+    sw.attach(@loop)
+    # The detach runs while the loop is running and the inotify fiber
+    # is parked in io_wait: the last watch is removed from this other
+    # watcher's callback.
+    detacher = EventLoopCompat::TimerWatcher.new(0.2) { sw.detach }
+    detacher.attach(@loop)
+    wd = EventLoopCompat::TimerWatcher.new(0.8) { @loop.stop }
+    wd.attach(@loop)
+    @loop.run
+
+    assert_equal([], @errors.map { |e| e.class.name })
+    assert_equal(baseline, inotify_fd_count,
+                 "the fd must be closed after the inotify fiber unregistered")
+  end
+
   def inotify_fd_count
     Dir.children("/proc/self/fd").count do |name|
       begin
