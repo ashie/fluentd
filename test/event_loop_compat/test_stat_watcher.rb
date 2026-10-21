@@ -131,4 +131,48 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
     assert_false(sw.attached?)
     assert_nil(sw.instance_variable_get(:@handle), "internal timer handle must be released")
   end
+
+  # The inotify fast path (Linux) must detect changes immediately, far
+  # before the polling interval would fire.
+  def test_inotify_fast_path_detects_change_immediately
+    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::StatWatcher.inotify_functions
+
+    write_file("one")
+    changes = []
+    sw = EventLoopCompat::StatWatcher.new(path, 30.0) { |_prev, cur| changes << cur }
+    sw.attach(@loop)
+    writer = EventLoopCompat::TimerWatcher.new(0.2) { write_file("two") }
+    writer.attach(@loop)
+    wd = EventLoopCompat::TimerWatcher.new(1.0) { @loop.stop }
+    wd.attach(@loop)
+    @loop.run
+
+    assert_true(changes.size >= 1, "inotify must detect the change long before the 30s interval")
+    assert_equal("two".bytesize, changes.first.size)
+    assert_equal([], @errors.map { |e| e.class.name })
+  end
+
+  # Replacement of the watched file by a rename (what in_tail rotation
+  # looks like) must be detected through the parent directory watch.
+  def test_inotify_fast_path_detects_rename_replacement
+    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::StatWatcher.inotify_functions
+
+    write_file("one")
+    changes = []
+    sw = EventLoopCompat::StatWatcher.new(path, 30.0) { |_prev, cur| changes << cur }
+    sw.attach(@loop)
+    rotator = EventLoopCompat::TimerWatcher.new(0.2) do
+      File.rename(path, path + ".bak")
+      write_file("fresh")
+    end
+    rotator.attach(@loop)
+    wd = EventLoopCompat::TimerWatcher.new(1.0) { @loop.stop }
+    wd.attach(@loop)
+    @loop.run
+
+    assert_true(changes.size >= 1, "inotify must detect the rename/replacement immediately")
+    assert_true(changes.any? { |cur| cur.size == "fresh".bytesize },
+                "expected a change to the replacement file, got #{changes.map(&:size)}")
+    assert_equal([], @errors.map { |e| e.class.name })
+  end
 end

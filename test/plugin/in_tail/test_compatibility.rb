@@ -464,9 +464,12 @@ class TailInputCompatibilityTest < Test::Unit::TestCase
 
     # IOHandler keeps the read position when receive_lines returns false, so
     # the lines must be emitted once the buffer is not full anymore.
+    # The stat watcher is disabled because its immediate reaction races
+    # with the manual on_notify calls below.
     def test_receive_lines_returning_false_does_not_advance_the_position
       File.binwrite("#{@tmp_dir}/tail.txt", "")
-      d = create_subclass_driver(SINGLE_LINE_CONFIG, :ReceiveLinesFailsOnce)
+      conf = SINGLE_LINE_CONFIG + config_element("", "", { "enable_stat_watcher" => "false" })
+      d = create_subclass_driver(conf, :ReceiveLinesFailsOnce)
       plugin = d.instance
       d.run do
         tw = first_watcher(plugin)
