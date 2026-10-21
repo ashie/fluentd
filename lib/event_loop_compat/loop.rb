@@ -45,6 +45,7 @@ module EventLoopCompat
       @notify_reader = nil
       @notify_writer = nil
       @control = nil
+      @inotify = nil
     end
 
     def timers
@@ -58,6 +59,28 @@ module EventLoopCompat
     # All attached watchers. Same meaning as Coolio::Loop#watchers.
     def watchers
       synchronize { @watchers.dup }
+    end
+
+    # The shared inotify instance of this loop, created on first use and
+    # dropped by Inotify#close when its last watch is removed (see
+    # event_loop_compat/inotify.rb). Like libev, all stat watchers of a
+    # loop share one inotify fd instead of one per watched path. Returns
+    # nil on platforms without inotify.
+    def inotify
+      return @inotify if @inotify
+      # Required lazily: inotify.rb depends on IOWatcher, which depends
+      # on Watcher, which requires this file (circular require).
+      require 'event_loop_compat/inotify'
+      return nil unless Inotify.supported?
+      @inotify = begin
+        Inotify.new(self)
+      rescue StandardError
+        nil
+      end
+    end
+
+    def __inotify_stopped__(instance)
+      @inotify = nil if @inotify.equal?(instance)
     end
 
     def attach(watcher)

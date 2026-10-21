@@ -17,18 +17,17 @@
 #
 # This implementation works on every platform (including Windows, where
 # Coolio cannot use inotify). On Linux it uses an inotify fast path
-# (the file itself plus its parent directory, through raw syscalls) so
-# change detection is immediate, matching what libev/cool.io do there;
-# the polling timer keeps running as the fallback, exactly like libev's
-# automatic interval. On other platforms detection latency is bounded by
-# the polling interval. Coolio's default interval (0, "automatic",
-# about 5 seconds in libev) is kept as the default here as well.
+# (the file itself plus its parent directory, through the per-loop
+# shared Inotify instance, like libev) so change detection is
+# immediate, matching what libev/cool.io do there; the polling timer
+# keeps running as the fallback, exactly like libev's automatic
+# interval. On other platforms detection latency is bounded by the
+# polling interval. Coolio's default interval (0, "automatic", about 5
+# seconds in libev) is kept as the default here as well.
 #
 
-require 'fiddle'
-
 require 'event_loop_compat/watcher'
-require 'event_loop_compat/io_watcher'
+require 'event_loop_compat/inotify'
 
 module EventLoopCompat
   class StatWatcher < Watcher
@@ -40,47 +39,6 @@ module EventLoopCompat
       :mtime, :ctime, :atime, :dev, :ino, :mode, :nlink,
       :uid, :guid, :rdev, :size, :blksize, :blocks)
 
-    # inotify event masks (uapi linux/inotify.h)
-    IN_MODIFY = 0x00000002
-    IN_ATTRIB = 0x00000004
-    IN_MOVED_FROM = 0x00000040
-    IN_MOVED_TO = 0x00000080
-    IN_CREATE = 0x00000100
-    IN_DELETE = 0x00000200
-    IN_DELETE_SELF = 0x00000400
-    IN_MOVE_SELF = 0x00000800
-    IN_Q_OVERFLOW = 0x00004000
-    IN_IGNORED = 0x00008000
-    IN_ONLYDIR = 0x00100000
-    # inotify_init1 flags (O_NONBLOCK / O_CLOEXEC)
-    IN_NONBLOCK = 0x00000800
-    IN_CLOEXEC = 0x00080000
-
-    FILE_WATCH_MASK = IN_ATTRIB | IN_MODIFY | IN_DELETE_SELF | IN_MOVE_SELF
-    DIR_WATCH_MASK = IN_CREATE | IN_MOVED_TO | IN_MOVED_FROM | IN_DELETE | IN_ONLYDIR
-
-    # libc inotify bindings through Fiddle (stdlib). Kernel#syscall is
-    # deprecated and unsafe, and Ruby has no inotify bindings otherwise.
-    # Returns nil on platforms without inotify (macOS, Windows), where
-    # the polling timer is used alone.
-    def self.inotify_functions
-      return @inotify_functions if defined?(@inotify_functions)
-      @inotify_functions = begin
-        libc = Fiddle.dlopen(nil)
-        {
-          init1: Fiddle::Function.new(libc['inotify_init1'],
-                                      [Fiddle::TYPE_INT], Fiddle::TYPE_INT),
-          add_watch: Fiddle::Function.new(libc['inotify_add_watch'],
-                                          [Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP, Fiddle::TYPE_UINT],
-                                          Fiddle::TYPE_INT),
-          rm_watch: Fiddle::Function.new(libc['inotify_rm_watch'],
-                                         [Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT),
-        }
-      rescue LoadError, RuntimeError
-        nil
-      end
-    end
-
     attr_reader :path, :interval
 
     def initialize(path, interval = nil, &callback)
@@ -91,8 +49,7 @@ module EventLoopCompat
       @handle = nil
       @deadline = nil
       @last = nil
-      @inotify_io = nil
-      @inotify_watcher = nil
+      @inotify = nil
       @wd_file = nil
       @wd_dir = nil
       super()
@@ -124,6 +81,31 @@ module EventLoopCompat
       stop_inotify
       @deadline = nil
       @last = nil
+    end
+
+    # Called by the shared Inotify instance for events matching a watch
+    # descriptor this watcher registered.
+    def __inotify_event__(wd, mask, name)
+      relevant = false
+      if (mask & Inotify::IN_IGNORED) != 0
+        # The kernel dropped the watch (file removed or moved away):
+        # update_watches re-adds it when the path exists again.
+        @wd_file = nil if wd == @wd_file
+        @wd_dir = nil if wd == @wd_dir
+        relevant = true
+      elsif (mask & Inotify::IN_Q_OVERFLOW) != 0
+        relevant = true
+      elsif wd == @wd_file
+        relevant = true
+      elsif wd == @wd_dir && name == File.basename(@path)
+        relevant = true
+      end
+      return unless relevant
+      begin
+        check_stat
+      rescue => e
+        @loop.__error__(self, e) if @loop
+      end
     end
 
     private
@@ -165,7 +147,7 @@ module EventLoopCompat
         end
         @last = cur
       end
-      update_watches if @inotify_io
+      update_watches if @inotify
     end
 
     def zero_stat_info
@@ -187,110 +169,43 @@ module EventLoopCompat
 
     #
     # inotify fast path (Linux only; the polling timer above stays as
-    # the fallback, exactly like libev's ev_stat)
+    # the fallback, exactly like libev's ev_stat). The inotify instance
+    # is shared per loop, so the fd count does not grow with the number
+    # of watched paths.
     #
 
     def start_inotify(loop)
-      functions = self.class.inotify_functions
-      return unless functions
-      fd = functions[:init1].call(IN_NONBLOCK | IN_CLOEXEC)
-      return if fd < 0
-      @inotify_io = IO.for_fd(fd)
+      @inotify = loop.inotify
+      return unless @inotify
       update_watches
-      if @wd_file.nil? && @wd_dir.nil?
-        # Nothing can be watched yet (no file, no parent directory):
-        # rely on the polling timer.
-        stop_inotify
-        return
-      end
-      @inotify_watcher = IOWatcher.new(@inotify_io, :r) { drain_inotify }
-      @inotify_watcher.attach(loop)
-    rescue StandardError, SystemCallError
-      stop_inotify
+    rescue StandardError
+      @inotify = nil
     end
 
     def stop_inotify
-      if @inotify_watcher
-        @inotify_watcher.close
-        @inotify_watcher = nil
-      elsif @inotify_io && !@inotify_io.closed?
-        @inotify_io.close
-      end
-      @inotify_io = nil
+      return unless @inotify
+      @inotify.remove_watch(self, @wd_file) if @wd_file
+      @inotify.remove_watch(self, @wd_dir) if @wd_dir
+      @inotify = nil
       @wd_file = nil
       @wd_dir = nil
     end
 
     def update_watches
-      functions = self.class.inotify_functions
-      return unless functions
-      return if @inotify_io.nil? || @inotify_io.closed?
+      return if @inotify.nil? || @inotify.closed?
 
       if @wd_dir.nil?
-        wd = functions[:add_watch].call(fileno, File.dirname(@path), DIR_WATCH_MASK)
-        @wd_dir = wd if wd >= 0
+        @wd_dir = @inotify.add_watch(self, File.dirname(@path), Inotify::DIR_WATCH_MASK)
       end
 
       if File.exist?(@path)
         if @wd_file.nil?
-          wd = functions[:add_watch].call(fileno, @path, FILE_WATCH_MASK)
-          @wd_file = wd if wd >= 0
+          @wd_file = @inotify.add_watch(self, @path, Inotify::FILE_WATCH_MASK)
         end
       elsif @wd_file
-        functions[:rm_watch].call(fileno, @wd_file)
+        @inotify.remove_watch(self, @wd_file)
         @wd_file = nil
       end
-    end
-
-    def fileno
-      @inotify_io.fileno
-    end
-
-    def drain_inotify
-      begin
-        data = @inotify_io.read_nonblock(4096)
-      rescue EOFError
-        return
-      rescue IO::WaitReadable, Errno::EAGAIN
-        return
-      end
-      return if data.nil? || data.empty?
-      relevant = parse_inotify_events(data)
-      return unless relevant
-      begin
-        check_stat
-      rescue => e
-        @loop.__error__(self, e) if @loop
-      end
-    end
-
-    # struct inotify_event { int wd; uint32 mask, cookie, len; char name[]; }
-    def parse_inotify_events(data)
-      relevant = false
-      basename = File.basename(@path)
-      pos = 0
-      while pos + 16 <= data.bytesize
-        wd, mask, _cookie, len = data[pos, 16].unpack('l L l L')
-        pos += 16
-        name = nil
-        if len > 0
-          name = data[pos, len].to_s.split("\x00", 2).first
-          pos += len
-        end
-        if (mask & IN_IGNORED) != 0
-          # The kernel dropped the watch (file removed or moved away):
-          # re-added by update_watches when the path exists again.
-          @wd_file = nil if wd == @wd_file
-          relevant = true
-        elsif (mask & IN_Q_OVERFLOW) != 0
-          relevant = true
-        elsif wd == @wd_file
-          relevant = true
-        elsif wd == @wd_dir && name == basename
-          relevant = true
-        end
-      end
-      relevant
     end
   end
 end

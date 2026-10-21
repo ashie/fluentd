@@ -135,7 +135,7 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
   # The inotify fast path (Linux) must detect changes immediately, far
   # before the polling interval would fire.
   def test_inotify_fast_path_detects_change_immediately
-    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::StatWatcher.inotify_functions
+    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
 
     write_file("one")
     changes = []
@@ -155,7 +155,7 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
   # Replacement of the watched file by a rename (what in_tail rotation
   # looks like) must be detected through the parent directory watch.
   def test_inotify_fast_path_detects_rename_replacement
-    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::StatWatcher.inotify_functions
+    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
 
     write_file("one")
     changes = []
@@ -174,5 +174,51 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
     assert_true(changes.any? { |cur| cur.size == "fresh".bytesize },
                 "expected a change to the replacement file, got #{changes.map(&:size)}")
     assert_equal([], @errors.map { |e| e.class.name })
+  end
+
+  # All stat watchers of one loop must share a single inotify instance
+  # (like libev does). One instance per watcher would grow the fd count
+  # with the number of watched files, and in_tail with many files would
+  # hit the fd limit and silently fall back to slow polling.
+  def test_inotify_instance_is_shared_across_watchers
+    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
+    skip "requires /proc/self/fd" unless File.directory?("/proc/self/fd")
+
+    paths = 3.times.map { |i| File.join(@dir, "shared#{i}.txt") }
+    paths.each { |p| File.write(p, "one") }
+    baseline = inotify_fd_count
+    changes = []
+    watchers = paths.map do |p|
+      EventLoopCompat::StatWatcher.new(p, 30.0) { |_prev, cur| changes << [p, cur.size] }
+    end
+    watchers.each { |w| w.attach(@loop) }
+
+    counts = []
+    checker = EventLoopCompat::TimerWatcher.new(0.3) { counts << inotify_fd_count }
+    checker.attach(@loop)
+    writer = EventLoopCompat::TimerWatcher.new(0.5) do
+      paths.each { |p| File.write(p, "two-two") }
+    end
+    writer.attach(@loop)
+    wd = EventLoopCompat::TimerWatcher.new(1.2) { @loop.stop }
+    wd.attach(@loop)
+    @loop.run
+
+    assert_equal([baseline + 1], counts.uniq, "exactly one inotify fd must serve all watchers")
+    assert_equal(3, changes.map(&:first).uniq.size, "every watched file must still be detected")
+    watchers.each(&:detach)
+    assert_equal(baseline, inotify_fd_count, "the shared inotify fd must be closed with the last watcher")
+    assert_equal([], @errors.map { |e| e.class.name })
+  end
+
+  def inotify_fd_count
+    Dir.children("/proc/self/fd").count do |name|
+      begin
+        File.readlink(File.join("/proc/self/fd", name)) == "anon_inode:inotify"
+      rescue SystemCallError
+        # The fd was closed between the listing and the readlink.
+        false
+      end
+    end
   end
 end
