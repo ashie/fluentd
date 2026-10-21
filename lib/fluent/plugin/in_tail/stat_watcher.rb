@@ -16,7 +16,6 @@
 
 require 'fluent/plugin/input'
 require 'fluent/plugin_helper/event_loop'
-require 'cool.io'
 
 module Fluent::Plugin
   class TailInput < Fluent::Plugin::Input

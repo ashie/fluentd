@@ -14,8 +14,6 @@
 #    limitations under the License.
 #
 
-require 'cool.io'
-
 require 'fluent/env'
 require 'fluent/plugin_helper'
 require 'fluent/plugin/service_discovery'

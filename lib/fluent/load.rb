@@ -12,7 +12,6 @@ begin
 rescue
   # ignore setup error on Win or similar platform which doesn't support signal
 end
-require 'cool.io'
 
 require 'fluent/time'
 require 'fluent/env'

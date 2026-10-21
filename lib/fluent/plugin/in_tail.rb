@@ -14,8 +14,6 @@
 #    limitations under the License.
 #
 
-require 'cool.io'
-
 require 'fluent/plugin/input'
 require 'fluent/config/error'
 require 'fluent/event'

@@ -14,7 +14,6 @@
 #    limitations under the License.
 #
 
-require 'cool.io'
 require 'fluent/counter/base_socket'
 require 'fluent/counter/error'
 require 'timeout'
@@ -28,7 +27,7 @@ module Fluent
       ID_LIMIT_COUNT = 1 << 31
 
       def initialize(loop = nil, opt = {})
-        @loop = loop || Coolio::Loop.new
+        @loop = loop || LOOP_BASE.new
         @port = opt[:port] || DEFAULT_PORT
         @host = opt[:host] || DEFAULT_ADDR
         @log = opt[:log] || $log

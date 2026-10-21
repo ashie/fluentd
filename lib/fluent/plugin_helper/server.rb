@@ -17,7 +17,6 @@
 require 'fluent/plugin_helper/event_loop'
 
 require 'serverengine'
-require 'cool.io'
 require 'socket'
 require 'ipaddr'
 require 'fcntl'

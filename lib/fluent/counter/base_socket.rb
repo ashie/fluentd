@@ -14,12 +14,25 @@
 #    limitations under the License.
 #
 
-require 'cool.io'
+require 'fluent/plugin_helper/event_loop'
 require 'fluent/msgpack_factory'
 
 module Fluent
   module Counter
-    class BaseSocket < Coolio::TCPSocket
+    # PoC feature flag: pick the cool.io or the EventLoopCompat base
+    # classes and loop. The loop instance and the watchers must always
+    # come from the same implementation.
+    if Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat
+      LOOP_BASE = EventLoopCompat::Loop
+      TCPSERVER_BASE = EventLoopCompat::TCPServer
+      TCPSOCKET_BASE = EventLoopCompat::TCPSocket
+    else
+      LOOP_BASE = Coolio::Loop
+      TCPSERVER_BASE = Coolio::TCPServer
+      TCPSOCKET_BASE = Coolio::TCPSocket
+    end
+
+    class BaseSocket < TCPSOCKET_BASE
       def packed_write(data)
         write pack(data)
       end

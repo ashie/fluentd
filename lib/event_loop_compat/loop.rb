@@ -46,6 +46,10 @@ module EventLoopCompat
       @notify_writer = nil
       @control = nil
       @inotify = nil
+      # Watchers whose runtime was started while the loop is not running
+      # (run_once mode), and the runtimes started during such calls.
+      @started = {}
+      @idle_runtimes = []
     end
 
     def timers
@@ -118,6 +122,7 @@ module EventLoopCompat
       if @running
         defer([:stop_runtime, watcher])
       else
+        @started.delete(watcher)
         watcher.__stop_runtime__(self)
       end
       self
@@ -136,6 +141,7 @@ module EventLoopCompat
       if @running
         defer([:stop_runtime, watcher])
       else
+        @started.delete(watcher)
         watcher.__stop_runtime__(self)
       end
       self
@@ -224,6 +230,35 @@ module EventLoopCompat
         end
       end
 
+      self
+    end
+
+    # Same meaning as Coolio::Loop#run_once: run one iteration of the
+    # event loop, processing the events that are ready and blocking at
+    # most +timeout+ seconds. The counter client uses this to drive its
+    # connection from its own thread without running the loop. Like
+    # libev, the loop is not thread-safe: all run_once calls of one
+    # loop must come from the same thread (the counter client
+    # serializes them with a mutex).
+    def run_once(timeout = nil)
+      raise "loop is running" if @running
+      @selector ||= IO::Event::Selector.new(Fiber.current)
+      @loop_thread = Thread.current
+      begin
+        synchronize { @watchers.dup }.each do |w|
+          next if @started.key?(w)
+          if w.attached? && w.enabled?
+            w.__start_runtime__(self)
+            @started[w] = true
+          end
+        end
+        process_commands(@idle_runtimes)
+        duration = run_duration(timeout)
+        @selector.select(duration)
+        @timers.fire
+      ensure
+        @loop_thread = nil
+      end
       self
     end
 

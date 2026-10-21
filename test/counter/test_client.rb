@@ -23,7 +23,7 @@ class CounterClientTest < ::Test::Unit::TestCase
 
     @server_name = 'server1'
     @scope = "worker1\tplugin1"
-    @loop = Coolio::Loop.new
+    @loop = Fluent::Counter::LOOP_BASE.new
     @server = Fluent::Counter::Server.new(@server_name, @options).start
     @client = Fluent::Counter::Client.new(@loop, @options).start
   end

@@ -2774,7 +2774,7 @@ class TailInputTest < Test::Unit::TestCase
     sio = StringIO.new
     plugin.instance_eval do
       @pf = Fluent::Plugin::TailInput::PositionFile.load(sio, EX_FOLLOW_INODES, {}, logger: $log)
-      @loop = Coolio::Loop.new
+      @loop = Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat ? EventLoopCompat::Loop.new : Coolio::Loop.new
     end
 
     Timecop.freeze(2010, 1, 2, 3, 4, 5) do
