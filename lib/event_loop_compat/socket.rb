@@ -271,6 +271,9 @@ module EventLoopCompat
       end
 
       @klass, @args, @block = klass, args, block
+      # @listen_socket matches the cool.io internal name, which Fluentd
+      # tests introspect on both backends.
+      @listen_socket = listen_socket
       super(listen_socket, :r)
     end
 

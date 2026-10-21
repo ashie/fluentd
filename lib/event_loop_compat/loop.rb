@@ -61,6 +61,14 @@ module EventLoopCompat
     end
 
     def attach(watcher)
+      if composite_watcher?(watcher)
+        # BufferedIO-like objects are not Watchers themselves (they own
+        # internal watchers), but Coolio::IO is a watcher and is passed
+        # to Loop#attach by the same call sites. Delegate to keep both
+        # backends interchangeable.
+        watcher.attach(self)
+        return self
+      end
       unless watcher.respond_to?(:__attached__)
         raise ArgumentError, "#{watcher.class} is not an EventLoopCompat watcher (was cool.io used with the io-event backend?)"
       end
@@ -77,6 +85,10 @@ module EventLoopCompat
     end
 
     def detach(watcher)
+      if composite_watcher?(watcher)
+        watcher.detach
+        return self
+      end
       removed = synchronize { @watchers.delete(watcher) }
       return self if removed.nil?
       watcher.__detached__
@@ -217,6 +229,10 @@ module EventLoopCompat
     end
 
     private
+
+    def composite_watcher?(watcher)
+      !watcher.respond_to?(:__attached__) && watcher.respond_to?(:attach) && watcher.respond_to?(:attached?)
+    end
 
     def synchronize(&block)
       @mutex.synchronize(&block)
