@@ -45,6 +45,23 @@ module Fluent
 
       attr_reader :_servers # for tests
 
+      # PoC feature flag: pick the cool.io or the EventLoopCompat base
+      # classes. The backend is decided by the event_loop helper, and the
+      # loop instance and the watchers must always come from the same
+      # implementation.
+      if Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat
+        require 'event_loop_compat'
+        LISTENER_BASE = EventLoopCompat::TCPServer
+        IO_BASE = EventLoopCompat::BufferedIO
+        TCPSOCKET_BASE = EventLoopCompat::TCPSocket
+        SOCKET_BASE = EventLoopCompat::Socket
+      else
+        LISTENER_BASE = Coolio::TCPServer
+        IO_BASE = Coolio::IO
+        TCPSOCKET_BASE = Coolio::TCPSocket
+        SOCKET_BASE = Coolio::Socket
+      end
+
       def server_wait_until_start
         # event_loop_wait_until_start works well for this
       end
@@ -216,7 +233,7 @@ module Fluent
         sock = server_create_tcp_socket(shared, bind, port)
         socket_option_setter.call(sock)
         close_callback = ->(conn){ @_server_mutex.synchronize{ @_server_connections.delete(conn) } }
-        server = Coolio::TCPServer.new(sock, nil, EventHandler::TCPServer, socket_option_setter, close_callback, @log, @under_plugin_development, block) do |conn|
+        server = LISTENER_BASE.new(sock, nil, EventHandler::TCPServer, socket_option_setter, close_callback, @log, @under_plugin_development, block) do |conn|
           unless conn.closing
             @_server_mutex.synchronize do
               @_server_connections << conn
@@ -232,7 +249,7 @@ module Fluent
         sock = server_create_tcp_socket(shared, bind, port)
         socket_option_setter.call(sock)
         close_callback = ->(conn){ @_server_mutex.synchronize{ @_server_connections.delete(conn) } }
-        server = Coolio::TCPServer.new(sock, nil, EventHandler::TLSServer, context, socket_option_setter, close_callback, @log, @under_plugin_development, block) do |conn|
+        server = LISTENER_BASE.new(sock, nil, EventHandler::TLSServer, context, socket_option_setter, close_callback, @log, @under_plugin_development, block) do |conn|
           unless conn.closing
             @_server_mutex.synchronize do
               @_server_connections << conn
@@ -527,7 +544,7 @@ module Fluent
       end
 
       module EventHandler
-        class UDPServer < Coolio::IO
+        class UDPServer < IO_BASE
           attr_writer :close_after_write_complete # dummy for consistent method call in callbacks
 
           def initialize(sock, max_bytes, flags, close_socket, log, under_plugin_development, &callback)
@@ -587,7 +604,7 @@ module Fluent
           end
         end
 
-        class TCPServer < Coolio::TCPSocket
+        class TCPServer < TCPSOCKET_BASE
           attr_reader :closing
           attr_writer :close_after_write_complete
 
@@ -676,7 +693,7 @@ module Fluent
           end
         end
 
-        class TLSServer < Coolio::Socket
+        class TLSServer < SOCKET_BASE
           attr_reader :closing
           attr_writer :close_after_write_complete
 

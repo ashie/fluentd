@@ -173,7 +173,17 @@ module Fluent::Plugin
       end
     end
 
-    class KeepaliveManager < Coolio::TimerWatcher
+    # PoC feature flag: pick the cool.io or the EventLoopCompat base
+    # class. The loop instance and the watchers must always come from
+    # the same implementation.
+    if Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat
+      require 'event_loop_compat'
+      KEEPALIVE_MANAGER_BASE = EventLoopCompat::TimerWatcher
+    else
+      KEEPALIVE_MANAGER_BASE = Coolio::TimerWatcher
+    end
+
+    class KeepaliveManager < KEEPALIVE_MANAGER_BASE
       def initialize(timeout)
         super(1, true)
         @cons = {}
