@@ -34,18 +34,18 @@ module EventLoopCompat
     attr_reader :io
 
     def initialize(io, &on_read_block)
-      @io = io
+      @_io = io
       @on_read_block = on_read_block
       @loop = nil
       @write_buffer = []
       @write_buffer_size = 0
       @closed = false
-      @read_watcher = IOWatcher.new(@io, :r) { on_readable }
-      @write_watcher = IOWatcher.new(@io, :w) { on_writable }
+      @read_watcher = IOWatcher.new(@_io, :r) { on_readable }
+      @write_watcher = IOWatcher.new(@_io, :w) { on_writable }
     end
 
     def to_io
-      @io
+      @_io
     end
 
     #
@@ -56,7 +56,10 @@ module EventLoopCompat
       raise ArgumentError, "already attached" if attached?
       @loop = loop
       loop.attach(@read_watcher)
-      schedule_write
+      # Same guard as Coolio::IO#attach: never enable write interest
+      # without buffered data, or the level-triggered loop fires
+      # on_write_complete spuriously.
+      schedule_write unless @write_buffer.empty?
       self
     end
 
@@ -142,12 +145,21 @@ module EventLoopCompat
     end
 
     def close
+      loop = @loop
       detach if attached?
       unless @closed
         @closed = true
-        begin
-          @io.close unless @io.closed?
-        rescue IOError
+        if loop && loop.running? && (@read_watcher.fiber_alive? || @write_watcher.fiber_alive?)
+          # A fiber may still be registered on the shared io in the
+          # selector; closing the fd now would race with the selector.
+          # The watchers' fibers close it once they have exited.
+          @read_watcher.request_close
+          @write_watcher.request_close
+        else
+          begin
+            @_io.close unless @_io.closed?
+          rescue IOError
+          end
         end
       end
       on_close
@@ -155,7 +167,7 @@ module EventLoopCompat
     end
 
     def closed?
-      @closed || @io.nil? || @io.closed?
+      @closed || @_io.nil? || @_io.closed?
     end
 
     protected
@@ -165,7 +177,7 @@ module EventLoopCompat
     # super exactly like on the cool.io backend.
     def on_readable
       begin
-        data = @io.read_nonblock(INPUT_SIZE)
+        data = @_io.read_nonblock(INPUT_SIZE)
       rescue Errno::EAGAIN, Errno::EINTR
         return
       end
@@ -185,14 +197,17 @@ module EventLoopCompat
       end
 
       if @write_buffer.empty?
-        disable_write_watcher
+        # Coolio detaches the write watcher when the buffer drains, so
+        # that a level-triggered loop cannot deliver a spurious writable
+        # event and fire on_write_complete twice.
+        @loop.detach(@write_watcher) if @loop && @write_watcher.attached?
         on_write_complete
       end
     end
 
     def flush_write_buffer
       while (chunk = @write_buffer.first)
-        written = @io.write_nonblock(chunk)
+        written = @_io.write_nonblock(chunk)
         if written >= chunk.bytesize
           @write_buffer.shift
         else
@@ -202,10 +217,12 @@ module EventLoopCompat
       end
     end
 
+    # Same as Coolio::IO#schedule_write: no check for an empty buffer,
+    # because subclasses (TLS handlers) keep their own write buffer and
+    # call schedule_write directly.
     def schedule_write
       return if closed?
       return unless attached?
-      return if @write_buffer.empty?
       if @write_watcher.attached?
         @write_watcher.enable unless @write_watcher.enabled?
       else

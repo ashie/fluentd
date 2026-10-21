@@ -41,6 +41,7 @@ module EventLoopCompat
       @fiber = nil
       @park_reader = nil
       @park_writer = nil
+      @close_requested = false
       super()
     end
 
@@ -56,12 +57,35 @@ module EventLoopCompat
     # method, but Coolio::IO#close and Coolio::Listener#close provide the
     # equivalent behavior for the classes used by Fluentd; this is the
     # shared implementation for direct IOWatcher users (UDPServer).
+    #
+    # If the fiber is still registered in the selector and the detach is
+    # deferred to the event loop thread, closing the fd here would race
+    # with the selector processing events for it (io-event crashes on
+    # that). In that case the close is requested and performed by the
+    # fiber's ensure block, after its registration is gone.
     def close
+      loop = @loop
       detach if attached?
-      begin
-        @io.close unless @io.closed?
-      rescue IOError, Errno::EBADF
+      if @close_requested
+        nil
+      elsif loop && loop.running? && @fiber && @fiber.alive? && !Fiber.current.equal?(@fiber)
+        # The fiber is suspended in io_wait (or parked) and will be
+        # stopped on the event loop thread; close the io from there.
+        @close_requested = true
+      else
+        close_io
       end
+      nil
+    end
+
+    # Used by BufferedIO#close: the shared io is closed once all fibers
+    # that could be registered on it have exited.
+    def request_close
+      @close_requested = true
+    end
+
+    def fiber_alive?
+      !@fiber.nil? && @fiber.alive?
     end
 
     def __start_runtime__(loop)
@@ -105,6 +129,7 @@ module EventLoopCompat
         ensure
           @fiber = nil
           close_park
+          close_io if @close_requested
         end
       end
       @fiber.transfer
@@ -123,9 +148,15 @@ module EventLoopCompat
       # The selector is closed: every fiber of this run is dead.
       @fiber = nil
       close_park
+      close_io if @close_requested
     end
 
     private
+
+    def close_io
+      @io.close unless @io.closed?
+    rescue IOError, Errno::EBADF
+    end
 
     def park(selector)
       ensure_park
