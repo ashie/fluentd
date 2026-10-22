@@ -15,8 +15,11 @@ This document describes the compatibility layer used when
   compatibility namespace. With the compat backend and the real gem
   loaded first, it raises `LoadError` instead of leaving a mixed
   namespace behind.
-- `require 'coolio'` is not intercepted. Under the compat backend it still
-  loads the real cool.io alias.
+- `require 'coolio'` is intercepted indirectly when the `cool.io` gem is
+  available to RubyGems: the gem's `coolio.rb` alias calls
+  `require 'cool.io'`, which resolves to this shim. If the real cool.io
+  extension was loaded before that, the shim raises `LoadError` under the
+  compat backend instead of mixing namespaces.
 
 `lib/event_loop_compat/coolio.rb` defines the `Coolio` namespace on top of
 `EventLoopCompat`. It refuses to load if the real cool.io extension is already
@@ -30,6 +33,7 @@ Loading both implementations in one process is not supported in any order:
 | Loaded first | Then | Result |
 | --- | --- | --- |
 | real cool.io | `require 'cool.io'` with the compat backend | `LoadError` from the shim |
+| real cool.io | `require 'coolio'` with the compat backend | `LoadError` from the shim |
 | real cool.io | `require 'event_loop_compat/coolio'` | `LoadError` from the namespace |
 | compatibility namespace | real cool.io | `TypeError: superclass mismatch for class Coolio::Loop` |
 
@@ -214,8 +218,9 @@ cool.io returns the truthy Integer `0`.
   `Addrinfo.getaddrinfo`; real cool.io uses asynchronous DNS resolution.
 - `Coolio::Loop` accepts `:skip_environment`, `:fork_check`, and `:backend`
   options for API compatibility, but they do not configure libev behavior.
-- `require 'coolio'` is not shimmed. Under the compat backend it loads the real
-  cool.io alias and can conflict with the compatibility namespace.
+- `require 'coolio'` is only intercepted through the real gem's `coolio.rb`
+  alias. If RubyGems cannot find the `cool.io` gem, `require 'coolio'` does not
+  load the compatibility namespace.
 - The concrete Coolio watcher classes inherit `Coolio::Watcher` and get their
   implementation from the `EventLoopCompat` watcher classes by mixing in
   `EventLoopCompat::IOWatcherBehavior`, `EventLoopCompat::TimerWatcherBehavior`

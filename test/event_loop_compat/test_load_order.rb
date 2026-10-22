@@ -30,6 +30,23 @@ class EventLoopCompatCoolioLoadOrderTest < Test::Unit::TestCase
     puts "loaded"
   RUBY
 
+  REAL_FIRST_THEN_COOLIO_ALIAS = <<~RUBY
+    path = Gem::Specification.find_by_name("cool.io").full_require_paths.first
+    require File.join(path, "cool.io.rb")
+    require "coolio"
+    puts "loaded"
+  RUBY
+
+  COOLIO_ALIAS_WITH_COMPAT_BACKEND = <<~RUBY
+    require "coolio"
+    puts Coolio::Loop.ancestors.include?(EventLoopCompat::Loop)
+  RUBY
+
+  COOLIO_ALIAS_WITH_DEFAULT_BACKEND = <<~RUBY
+    require "coolio"
+    puts Coolio::Loop.instance_method(:run).source_location.first.include?("cool.io")
+  RUBY
+
   SHIM_WITH_COMPAT_BACKEND = <<~RUBY
     require "cool.io"
     puts Coolio::Loop.ancestors.include?(EventLoopCompat::Loop)
@@ -44,6 +61,24 @@ class EventLoopCompatCoolioLoadOrderTest < Test::Unit::TestCase
     status, output = run_child(REAL_FIRST_THEN_SHIM, compat_backend: true)
     assert_not_equal(0, status)
     assert_match(/cool\.io is already loaded/, output)
+  end
+
+  def test_real_gem_loaded_before_the_coolio_alias_with_compat_backend
+    status, output = run_child(REAL_FIRST_THEN_COOLIO_ALIAS, compat_backend: true)
+    assert_not_equal(0, status)
+    assert_match(/cool\.io is already loaded/, output)
+  end
+
+  def test_coolio_alias_loads_the_compat_namespace_with_compat_backend
+    status, output = run_child(COOLIO_ALIAS_WITH_COMPAT_BACKEND, compat_backend: true)
+    assert_equal(0, status, output)
+    assert_equal('true', output.strip)
+  end
+
+  def test_coolio_alias_loads_the_real_gem_with_default_backend
+    status, output = run_child(COOLIO_ALIAS_WITH_DEFAULT_BACKEND)
+    assert_equal(0, status, output)
+    assert_equal('true', output.strip)
   end
 
   def test_real_gem_loaded_after_the_compat_namespace
