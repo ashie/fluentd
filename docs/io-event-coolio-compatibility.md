@@ -287,6 +287,20 @@ cool.io returns the truthy Integer `0`.
   with `==` against `true` or `false` differs.
 - Instead: use the truthiness of the result.
 
+### `Coolio::AsyncWatcher` on Windows
+
+`Coolio::AsyncWatcher#signal` wakes the loop on Windows. real cool.io does not
+fire the callback in the probed scenario because its `AsyncWatcher` is an
+`IOWatcher` on an anonymous pipe and libev on Windows does not report
+readability for that pipe.
+
+- Why it is kept: the compatibility layer implements the signal hand-off with
+  the selector it already uses, so the documented public behavior works on the
+  platforms Fluentd supports.
+- Effect on plugins: code that uses `AsyncWatcher` to wake a loop from another
+  thread works here on Windows and is silently broken with cool.io there.
+- Instead: do not rely on cool.io's Windows `AsyncWatcher` behavior.
+
 ## Known gaps
 
 - `run_once` event counts are approximate. IO events are counted from the
@@ -294,6 +308,9 @@ cool.io returns the truthy Integer `0`.
   guaranteed to match libev event counts exactly.
 - `Coolio::Buffer` is a pure-Ruby approximation. Its basic probed behavior is
   compared with the real C extension, but it has not been exhaustively validated.
+- `StatInfo#blksize` and `StatInfo#blocks` are filled from Ruby's `File::Stat`
+  when available, but the comparison test does not compare them because real
+  cool.io fills them only when it is built with `HAVE_ST_BLKSIZE`.
 - `Coolio::DNSResolver` is implemented but not directly tested.
 - `Coolio::TCPSocket.connect` resolves hostnames synchronously with
   `Addrinfo.getaddrinfo`; real cool.io uses asynchronous DNS resolution.
