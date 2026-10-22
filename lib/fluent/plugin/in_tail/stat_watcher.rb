@@ -19,19 +19,7 @@ require 'fluent/plugin_helper/event_loop'
 
 module Fluent::Plugin
   class TailInput < Fluent::Plugin::Input
-    # PoC feature flag: pick the cool.io or the EventLoopCompat base
-    # classes. The loop instance and the watchers must always come from
-    # the same implementation.
-    if Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat
-      require 'event_loop_compat'
-      STAT_WATCHER_BASE = EventLoopCompat::StatWatcher
-      TIMER_TRIGGER_BASE = EventLoopCompat::TimerWatcher
-    else
-      STAT_WATCHER_BASE = Coolio::StatWatcher
-      TIMER_TRIGGER_BASE = Coolio::TimerWatcher
-    end
-
-    class StatWatcher < STAT_WATCHER_BASE
+    class StatWatcher < Coolio::StatWatcher
       def initialize(path, log, &callback)
         @callback = callback
         @log = log
@@ -46,7 +34,7 @@ module Fluent::Plugin
       end
     end
 
-    class TimerTrigger < TIMER_TRIGGER_BASE
+    class TimerTrigger < Coolio::TimerWatcher
       def initialize(interval, log, repeat: true, &callback)
         @log = log
         @callback = callback

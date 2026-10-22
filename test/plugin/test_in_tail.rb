@@ -178,6 +178,11 @@ class TailInputTest < Test::Unit::TestCase
     end)
   end
 
+  test "watchers are based on the Coolio API" do
+    assert_equal Coolio::StatWatcher, Fluent::Plugin::TailInput::StatWatcher.superclass
+    assert_equal Coolio::TimerWatcher, Fluent::Plugin::TailInput::TimerTrigger.superclass
+  end
+
   sub_test_case "configure" do
     test "plain single line" do
       d = create_driver
