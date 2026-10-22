@@ -64,6 +64,46 @@ socket API use the `Coolio` interface on both backends. Their production source
 is unchanged from master; only the event loop helper retains a backend-specific
 error handler. The io-event implementation and load-path shim are new files.
 
+## Possible integration into cool.io (not implemented)
+
+The compatibility layer could live in the cool.io gem instead of Fluentd. The
+gem's `require 'cool.io'` entry point could select the existing libev backend
+by default or an io-event backend through an opt-in setting (for example,
+`COOLIO_BACKEND=io_event`). `require 'coolio'` and external plugins would then
+use the same gem and public `Coolio` namespace, without Fluentd shadowing its
+load path. The current PoC demonstrates that Fluentd's bundled plugins and
+most core code can use that namespace without backend-specific base classes;
+it does **not** demonstrate an integrated cool.io gem.
+
+Known issues with moving the layer into cool.io:
+
+- Backend selection must happen before the native `cool.io_ext` is required or
+  backend-specific `Coolio` classes are defined. Select one backend per
+  process; switching after loading, or mixing watcher and loop
+  implementations, is not supported.
+  A setting read only after Fluentd loads plugins would be too late.
+- cool.io currently builds a native extension containing libev. Merely
+  selecting io-event at runtime would avoid using that extension but would not
+  remove its install-time build requirement. Avoiding libev entirely would
+  require a separate packaging step, such as making the native backend
+  optional or splitting it out, plus a clear dependency policy for io-event.
+- Some of cool.io's Ruby-level IO, socket and server classes sit on top of its
+  native watcher, loop and buffer classes. The PoC reproduces parts of this
+  stack in the compatibility namespace. Moving it into the gem should examine
+  which Ruby code can be shared and which backend-specific behavior must stay
+  separate; copying the whole PoC would leave two implementations to maintain.
+- Ownership by cool.io would not remove the observable differences listed
+  below (for example one-shot timers, stat attributes and synchronous DNS).
+  Their compatibility policy, load-order tests, and cross-platform behavior
+  would have to be maintained in cool.io. The current PoC has not been tested
+  on a Windows host, and its full suite has not completed after the latest
+  integration changes.
+
+A practical first step would keep the existing libev build and default backend
+while moving selection and the compatibility tests into cool.io. Whether to
+remove the native build dependency is a separate decision; runtime switching
+alone does not solve that part of the original motivation.
+
 ## Implemented public API
 
 | API | Status | Notes |
