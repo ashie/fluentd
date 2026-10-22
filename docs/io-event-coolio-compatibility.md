@@ -20,7 +20,9 @@ This document describes the compatibility layer used when
 
 `lib/event_loop_compat/coolio.rb` defines the `Coolio` namespace on top of
 `EventLoopCompat`. It refuses to load if the real cool.io extension is already
-loaded.
+loaded. `require 'event_loop_compat'` loads it too, so a plugin that uses the
+`Coolio` constants without requiring the gem keeps working with the compat
+backend, as it does with the real gem.
 
 Loading both implementations in one process is not supported in any order:
 

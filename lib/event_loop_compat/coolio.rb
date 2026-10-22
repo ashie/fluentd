@@ -2,10 +2,11 @@
 # Coolio compatibility namespace on top of EventLoopCompat.
 #
 # This file intentionally defines the public Coolio constants used by
-# external plugins. It is not loaded by the normal EventLoopCompat entry
-# point; lib/cool.io.rb loads it only when the io_event_compat backend is
-# selected. Loading both the real cool.io extension and this namespace in
-# the same process is not supported.
+# external plugins. It is loaded by the EventLoopCompat entry point and by
+# lib/cool.io.rb, so that a process using the io_event_compat backend has
+# the same Coolio namespace as one using the cool.io gem. Loading both the
+# real cool.io extension and this namespace in the same process is not
+# supported.
 #
 # The watcher classes reproduce the cool.io hierarchy: Coolio::Watcher is
 # the base class of Coolio::IOWatcher, Coolio::TimerWatcher and
