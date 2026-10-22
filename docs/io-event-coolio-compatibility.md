@@ -9,6 +9,13 @@ changes around Ruby's asynchronous IO can break the stack. It is useful to
 know whether Fluentd has a viable alternative if maintaining it becomes
 difficult.
 
+Fluentd already depends on `async-http`, which brings in Async and io-event.
+Using io-event beneath the Coolio API would therefore align this backend with
+an IO library already present in Fluentd's dependency graph. The PoC declares
+io-event directly rather than relying on that transitive dependency. Sharing a
+dependency does not mean the Coolio and Async event loops share a scheduler or
+automatically cooperate; that would need separate integration tests.
+
 This proof of concept uses io-event's low-level primitives and asks a more
 specific question than whether Fluentd's own tests pass: can Fluentd and its
 plugin ecosystem continue to use the Coolio API, including `require 'cool.io'`,
