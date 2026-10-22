@@ -26,13 +26,18 @@ class EventLoopCompatCoolioCompatibilityTest < Test::Unit::TestCase
     # compatibility layer resolves it synchronously.
     "class TCPSocket" => '"superclass=Coolio::Socket ancestors=Coolio::TCPSocket,Coolio::Socket,Coolio::IO constants=Connector,INPUT_SIZE,PEERADDR_FAILED,TCPConnectSocket,Watcher"',
 
-    # cool.io stats the path when the watcher is attached, the
-    # compatibility layer when the loop starts running.
-    "stat baseline at attach" => 'false',
+    # cool.io reports the attributes of the file it had before the
+    # removal; the compatibility layer reports the attributes of a
+    # missing path, which are all zero.
+    "stat removed file" => '"[[0, true]]"',
 
     # cool.io leaves a one-shot timer enabled after it fires, which
     # makes Loop#run block forever; the compatibility layer disables it.
     "timer one-shot disabled after firing" => 'true',
+
+    # The count of enabled watchers is what the compatibility layer uses
+    # to decide whether Loop#run may return.
+    "loop has active watchers after one-shot" => 'false',
 
     # cool.io reports an attached watcher with the truthy value 0.
     "timer one-shot still attached" => 'true',

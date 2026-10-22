@@ -226,6 +226,10 @@ loop.run_once(0.5)
 report("timer one-shot fires", fires)
 report("timer one-shot disabled after firing", !timer.enabled?)
 report("timer one-shot still attached", timer.attached?)
+# cool.io counts attached watchers in @active_watchers and never lowers
+# that count for a one-shot timer, so its Loop#run keeps blocking after
+# the timer has fired.
+report("loop has active watchers after one-shot", loop.has_active_watchers?)
 
 # repeating timer stopped from the callback
 loop = Coolio::Loop.new
@@ -331,9 +335,8 @@ Dir.mktmpdir("coolio-stat") do |dir|
   report("stat on_change", stat.changes.first.inspect)
 end
 
-# Baseline seeding: cool.io stats the path when the watcher is attached,
-# EventLoopCompat when the loop starts, so a change made in between is
-# reported by cool.io and missed by the compatibility layer.
+# Baseline seeding: both implementations stat the path when the watcher
+# is attached, so a change made before the loop runs is reported.
 Dir.mktmpdir("coolio-stat-baseline") do |dir|
   path = File.join(dir, "f")
   File.write(path, "a")
@@ -346,6 +349,95 @@ Dir.mktmpdir("coolio-stat-baseline") do |dir|
   stopper.attach(loop)
   loop.run(1)
   report("stat baseline at attach", stat.changes.size > 0)
+end
+
+# The attributes of a path that does not exist are uninitialized memory
+# in the C extension, so only the attributes of the current file are
+# reported for the missing path and removal scenarios.
+class AttrStatProbe < Coolio::StatWatcher
+  attr_reader :changes
+
+  def initialize(path)
+    @changes = []
+    super(path, 0.05)
+  end
+
+  def on_change(prev, cur)
+    @changes << [cur.size, cur.mode.zero?]
+  end
+end
+
+def stop_after(loop, interval)
+  stopper = Coolio::TimerWatcher.new(interval, false)
+  stopper.on_timer { loop.stop }
+  stopper.attach(loop)
+  stopper
+end
+
+# Detaching and attaching again re-seeds the baseline, so the change made
+# in between is not reported.
+Dir.mktmpdir("coolio-stat-reattach") do |dir|
+  path = File.join(dir, "f")
+  File.write(path, "a")
+  loop = Coolio::Loop.new
+  stat = CountingStatProbe.new(path)
+  stat.attach(loop)
+  stop_after(loop, 0.2)
+  loop.run(1)
+  stat.detach
+  File.write(path, "ccc")
+  stat.attach(loop)
+  stop_after(loop, 0.3)
+  loop.run(1)
+  report("stat reattach re-seeds baseline", stat.changes.size)
+end
+
+# A watcher that stays attached keeps its baseline while the loop is
+# stopped, so the change made in between is reported by the next run.
+Dir.mktmpdir("coolio-stat-rerun") do |dir|
+  path = File.join(dir, "f")
+  File.write(path, "a")
+  loop = Coolio::Loop.new
+  stat = CountingStatProbe.new(path)
+  stat.attach(loop)
+  stop_after(loop, 0.2)
+  loop.run(1)
+  after_first_run = stat.changes.size
+  File.write(path, "dddd")
+  stop_after(loop, 0.3)
+  loop.run(1)
+  report("stat baseline across loop runs", [after_first_run, stat.changes.size].inspect)
+end
+
+# A path that does not exist yet: the first stat only seeds a baseline,
+# the file being created is reported as a change.
+Dir.mktmpdir("coolio-stat-missing") do |dir|
+  path = File.join(dir, "missing")
+  loop = Coolio::Loop.new
+  stat = AttrStatProbe.new(path)
+  stat.attach(loop)
+  writer = Coolio::TimerWatcher.new(0.2, false)
+  writer.on_timer { File.write(path, "hello") }
+  writer.attach(loop)
+  stop_after(loop, 0.5)
+  loop.run(2)
+  report("stat missing path", stat.changes.inspect)
+end
+
+# Removing the watched file reports one change in both implementations,
+# but the attributes of the removed file are not the same.
+Dir.mktmpdir("coolio-stat-removed") do |dir|
+  path = File.join(dir, "f")
+  File.write(path, "aaaa")
+  loop = Coolio::Loop.new
+  stat = AttrStatProbe.new(path)
+  stat.attach(loop)
+  remover = Coolio::TimerWatcher.new(0.2, false)
+  remover.on_timer { File.unlink(path) }
+  remover.attach(loop)
+  stop_after(loop, 0.5)
+  loop.run(2)
+  report("stat removed file", stat.changes.inspect)
 end
 
 # TCPServer echo through the connection class

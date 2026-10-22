@@ -11,9 +11,10 @@
 # polling semantics (cool.io's inotify fast path on Linux instead
 # reports a removal with the last known attributes unchanged; we follow
 # the deterministic polling semantics so behavior does not depend on
-# the platform). Like libev, no callback is made at startup: the first
-# stat only seeds the baseline. Change detection compares all members
-# including ctime.
+# the platform). Like libev, no callback is made at startup: the path is
+# stat'ed when the watcher is attached and that only seeds the baseline,
+# which is kept while the watcher stays attached. Change detection
+# compares all members including ctime.
 #
 # This implementation works on every platform (including Windows, where
 # Coolio cannot use inotify). On Linux it uses an inotify fast path
@@ -63,11 +64,20 @@ module EventLoopCompat
     # watcher across runs or inflate the loop's watcher set.
     def __start_runtime__(loop)
       return if @handle
-      # Like libev, the first stat only seeds the baseline: no callback.
-      @last = stat_info
+      # The baseline was seeded when the watcher was attached; a watcher
+      # attached while the loop runs is seeded here instead.
+      @last = stat_info if @last.nil?
       @deadline = loop.timers.now + @interval
       schedule_next(loop)
       start_inotify(loop)
+    end
+
+    # cool.io (libev ev_stat) stats the path when the watcher is attached,
+    # so a change made between attaching and running the loop is reported.
+    # Attaching again re-seeds the baseline, as in cool.io.
+    def __attached__(loop)
+      super
+      @last = stat_info
     end
 
     def __stop_runtime__(loop)
@@ -75,11 +85,13 @@ module EventLoopCompat
       stop_inotify
     end
 
+    # The watcher stays attached when the loop stops, and cool.io keeps
+    # comparing against the attributes it read before, so the baseline
+    # survives across runs.
     def __run_finished__
       cancel_handle
       stop_inotify
       @deadline = nil
-      @last = nil
     end
 
     # Called by the shared Inotify instance for events matching a watch

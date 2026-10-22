@@ -96,7 +96,10 @@ process so the compat `Coolio` namespace does not pollute the test process.
 
 `test/event_loop_compat/coolio_compare_probe.rb` reports the class hierarchy,
 `is_a?`/`kind_of?`/`===`, constructor and callback errors, loop return values,
-timer, IO, socket and stat watcher behavior of one implementation.
+timer, IO, socket and stat watcher behavior of one implementation. That
+includes the stat watcher baseline: a change made between attaching and running
+the loop, detaching and attaching again, keeping the watcher attached across two
+runs of the loop, a path that does not exist yet, and removing the watched file.
 `test/event_loop_compat/test_coolio_compatibility.rb` runs it against the real
 cool.io gem and against this repository in child processes and compares the
 two reports, so the contracts above are checked against the real gem rather
@@ -112,22 +115,92 @@ external plugins do.
 ## Differences from cool.io
 
 These are the differences the comparison test pins down. Everything else in
-the probe matches the real gem.
+the probe matches the real gem. For each one, why it is kept, what it means for
+a plugin, and what a plugin can do instead are written down.
 
-- Re-attaching an attached watcher re-attaches it. cool.io raises
-  `ArgumentError: wrong number of arguments (given 0, expected 1)` because of
-  how its C extension handles the second `attach`.
-- `Coolio::Loop` does not define the libev `EVBACKEND_*` and `EVFLAG_*`
-  constants. There is no libev backend to select.
-- `Coolio::TCPSocket` does not define `TCPConnectResolver`; the address is
-  resolved synchronously, see `Known gaps`.
-- `Coolio::StatWatcher` stats the path when the loop starts, cool.io when the
-  watcher is attached. A change made between attaching and running the loop is
-  reported by cool.io and missed here.
-- A one-shot `Coolio::TimerWatcher` is disabled after it fires, so
-  `Loop#run` returns. cool.io leaves it enabled and `Loop#run` blocks forever
-  unless a callback stops the loop.
-- `attached?` returns `true`. cool.io returns the truthy value `0`.
+### Re-attaching an attached watcher
+
+`Coolio::Watcher#attach` re-attaches an attached watcher. cool.io raises
+`ArgumentError: wrong number of arguments (given 0, expected 1)`.
+
+- Why it is kept: that error is an accident of how the C extension calls the
+  loop's `attach` a second time, not a documented contract, and there is no
+  second `attach` implementation to reproduce it with.
+- Effect on plugins: attaching twice works here and raises with cool.io. Nothing
+  in the ecosystem depends on the exception.
+- Instead: ask `attached?` before attaching, as plugins already have to do to
+  avoid the exception.
+
+### The libev constants of `Coolio::Loop`
+
+`EVBACKEND_*` and `EVFLAG_*` are not defined, and the `:backend`,
+`:fork_check` and `:skip_environment` options are accepted but ignored.
+
+- Why it is kept: there is no libev backend to select; io-event uses one
+  selector per loop and chooses the mechanism itself.
+- Effect on plugins: code reading `Coolio::Loop::EVBACKEND_KQUEUE` gets a
+  `NameError`. Nothing in the ecosystem reads them; only the gem's own specs do.
+- Instead: do not select a backend.
+
+### `Coolio::TCPSocket::TCPConnectResolver` and asynchronous DNS
+
+The constant is not defined and `Coolio::TCPSocket.connect` resolves the address
+synchronously.
+
+- Why it is kept: asynchronous resolution needs a resolver watcher wired to the
+  loop; the compatibility layer has no consumer for it, and adding one would be
+  new API rather than compatibility.
+- Effect on plugins: the first `connect` to a hostname blocks the thread that
+  calls it. Subclasses of `Coolio::TCPSocket` work; code that references
+  `TCPConnectResolver` or `TCPConnectSocket` by name fails with `NameError`.
+- Instead: resolve the address before connecting, or use `IPAddr` literals.
+
+### The attributes of a removed or missing path
+
+Both report exactly one change when the watched file is removed, but the
+attributes differ: cool.io reports the attributes the file had before the
+removal (its inotify fast path does not re-stat the path), the compatibility
+layer reports the attributes of a missing path, which are all zero. For a path
+that does not exist when the watcher is attached, the `prev` struct that cool.io
+passes contains uninitialized memory.
+
+- Why it is kept: the zeroed attributes are the documented libev polling
+  semantics and are the same on every platform; Windows has no inotify, so the
+  cool.io values there are already different from Linux. Reproducing the
+  cool.io values would mean reproducing uninitialized memory.
+- Effect on plugins: a plugin that classifies the event from `prev` and `cur`
+  (for example "was the file deleted?") reads different fields. `in_tail` uses
+  the callback only as a trigger and does not look at the attributes.
+- Instead: treat `cur.mode.zero?` as "the path does not exist", or call
+  `File.exist?` in the callback.
+
+### One-shot timers
+
+A one-shot `Coolio::TimerWatcher` is disabled after it fires, so
+`Loop#has_active_watchers?` becomes false and `Loop#run` returns. cool.io leaves
+the watcher enabled, keeps counting it, and `Loop#run` blocks forever unless a
+callback calls `stop`.
+
+- Why it is kept: libev deactivates a one-shot timer when it fires; cool.io
+  only fails to lower its Ruby-level counter, so the blocking `run` is a
+  bookkeeping bug and not a contract. Reproducing it would make the
+  compatibility loop wait forever for an event that can never happen.
+- Effect on plugins: a plugin whose last remaining watcher is a fired one-shot
+  timer returns from `run` here and hangs with cool.io, so no plugin can depend
+  on the hang. A plugin that re-arms a one-shot timer with `enable` gets a
+  working timer here and `RuntimeError: already enabled` with cool.io.
+- Instead: keep the loop alive with a repeating watcher, which is what the event
+  loop helper does with its default watcher, and re-arm with `reset`.
+
+### `attached?` returns `true`
+
+cool.io returns the truthy Integer `0`.
+
+- Why it is kept: `0` is the raw `ev_is_active` value of the C extension leaking
+  into Ruby, where every object except `nil` and `false` is true.
+- Effect on plugins: `if w.attached?` behaves the same. Comparing the result
+  with `==` against `true` or `false` differs.
+- Instead: use the truthiness of the result.
 
 ## Known gaps
 
