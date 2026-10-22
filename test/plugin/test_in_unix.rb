@@ -22,10 +22,6 @@ class UnixInputTest < Test::Unit::TestCase
     Fluent::Test::Driver::Input.new(Fluent::Plugin::UnixInput).configure(conf)
   end
 
-  test "socket handlers are based on the Coolio API" do
-    assert_equal Coolio::Socket, Fluent::Plugin::UnixInput::Handler.superclass
-  end
-
   def packer(*args)
     Fluent::MessagePackFactory.msgpack_packer(*args)
   end

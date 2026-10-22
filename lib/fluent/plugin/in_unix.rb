@@ -18,6 +18,7 @@ require 'fluent/env'
 require 'fluent/plugin/input'
 require 'fluent/msgpack_factory'
 
+require 'cool.io'
 require 'json'
 require 'fileutils'
 require 'socket'

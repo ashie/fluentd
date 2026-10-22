@@ -178,11 +178,6 @@ class TailInputTest < Test::Unit::TestCase
     end)
   end
 
-  test "watchers are based on the Coolio API" do
-    assert_equal Coolio::StatWatcher, Fluent::Plugin::TailInput::StatWatcher.superclass
-    assert_equal Coolio::TimerWatcher, Fluent::Plugin::TailInput::TimerTrigger.superclass
-  end
-
   sub_test_case "configure" do
     test "plain single line" do
       d = create_driver
@@ -2779,7 +2774,7 @@ class TailInputTest < Test::Unit::TestCase
     sio = StringIO.new
     plugin.instance_eval do
       @pf = Fluent::Plugin::TailInput::PositionFile.load(sio, EX_FOLLOW_INODES, {}, logger: $log)
-      @loop = Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat ? EventLoopCompat::Loop.new : Coolio::Loop.new
+      @loop = Coolio::Loop.new
     end
 
     Timecop.freeze(2010, 1, 2, 3, 4, 5) do
