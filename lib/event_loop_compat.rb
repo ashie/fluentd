@@ -13,7 +13,3 @@ require 'event_loop_compat/inotify'
 require 'event_loop_compat/buffered_io'
 require 'event_loop_compat/socket'
 require 'event_loop_compat/stat_watcher'
-# Plugins written against cool.io may reference the Coolio constants
-# without requiring the gem, because the cool.io backend loads it. Define
-# the compatibility namespace in the same situations.
-require 'event_loop_compat/coolio'

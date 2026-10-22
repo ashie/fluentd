@@ -31,6 +31,10 @@ module Fluent
       EVENT_LOOP_BACKEND =
         if ENV['FLUENTD_EVENT_LOOP_BACKEND'] == 'io_event_compat'
           require 'event_loop_compat'
+          # Plugins written against cool.io may use the Coolio constants
+          # without requiring the gem, because the cool.io backend always
+          # loads it. Define the compatibility namespace here instead.
+          require 'event_loop_compat/coolio'
           :io_event_compat
         else
           require 'cool.io'
