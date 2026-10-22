@@ -10,6 +10,7 @@ require_relative '../helper'
 require 'fluent/plugin_helper/event_loop'
 require 'fluent/plugin/base'
 require 'cool.io'
+require 'socket'
 require 'tmpdir'
 
 class EventLoopCoolioWatchersTest < Test::Unit::TestCase
@@ -64,18 +65,21 @@ class EventLoopCoolioWatchersTest < Test::Unit::TestCase
   end
 
   def test_io_watcher_attached_to_the_loop_of_the_helper_reads_data
-    rd, wr = IO.pipe
-    watcher = Coolio::IOWatcher.new(rd, 'r')
+    server = TCPServer.new('127.0.0.1', 0)
+    client = TCPSocket.new('127.0.0.1', server.addr[1])
+    peer = server.accept
+    watcher = Coolio::IOWatcher.new(client, 'r')
     readable = Queue.new
-    watcher.on_readable { readable << rd.read_nonblock(100) }
+    watcher.on_readable { readable << client.read_nonblock(100) }
     watcher.attach(@d._event_loop)
 
-    wr.write "hello"
+    peer.write "hello"
     assert_equal "hello", wait_for(readable)
 
     watcher.detach
-    rd.close
-    wr.close
+    client.close
+    peer.close
+    server.close
   end
 
   def test_stat_watcher_attached_to_the_loop_of_the_helper_reports_changes

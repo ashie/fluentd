@@ -252,7 +252,10 @@ report("timer reset fires", reset_fires)
 
 # IO watcher read callback
 loop = Coolio::Loop.new
-reader, writer = IO.pipe
+listen = TCPServer.new('127.0.0.1', 0)
+port = listen.addr[1]
+reader = TCPSocket.new('127.0.0.1', port)
+writer = listen.accept
 received = nil
 iow = Coolio::IOWatcher.new(reader, 'r')
 iow.on_readable { received = reader.read_nonblock(16) }
@@ -261,12 +264,19 @@ writer.write "hello"
 loop.run_once(1)
 report("iowatcher on_readable", received)
 iow.detach
-reader.close
-writer.close
+[reader, writer, listen].each do |io|
+  begin
+    io.close unless io.closed?
+  rescue StandardError
+  end
+end
 
 # Coolio::IO read / write / close callbacks
 loop = Coolio::Loop.new
-client, server = Socket.pair(:UNIX, :STREAM)
+listen = TCPServer.new('127.0.0.1', 0)
+port = listen.addr[1]
+client = TCPSocket.new('127.0.0.1', port)
+server = listen.accept
 read_data = nil
 write_complete = false
 closed = false
@@ -283,7 +293,12 @@ report("io on_read", read_data)
 report("io on_write_complete", write_complete)
 io.close
 report("io on_close", closed)
-client.close
+[client, listen].each do |sock|
+  begin
+    sock.close unless sock.closed?
+  rescue StandardError
+  end
+end
 
 # AsyncWatcher
 loop = Coolio::Loop.new

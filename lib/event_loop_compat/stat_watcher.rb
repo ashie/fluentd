@@ -163,19 +163,37 @@ module EventLoopCompat
 
     def zero_stat_info
       epoch = Time.at(0)
-      EventLoopCompat::StatWatcher::StatInfo.new(epoch, epoch, epoch, 0, 0, 0, 0, 0, 0, 0, 0, nil, nil)
+      EventLoopCompat::StatWatcher::StatInfo.new(epoch, epoch, epoch, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     end
 
     def stat_info
       st = File.stat(@path)
-      # cool.io 1.9.0 never fills blksize / blocks (its extension does
-      # not define HAVE_ST_BLKSIZE), so they stay nil here as well.
+      mode = st.mode
+      if windows? && File.file?(@path)
+        mode |= 0666
+      end
+
+      blksize = begin
+        st.blksize if st.respond_to?(:blksize)
+      rescue StandardError
+        nil
+      end
+      blocks = begin
+        st.blocks if st.respond_to?(:blocks)
+      rescue StandardError
+        nil
+      end
+
       EventLoopCompat::StatWatcher::StatInfo.new(
-        st.mtime, st.ctime, st.atime, st.dev, st.ino, st.mode,
+        st.mtime, st.ctime, st.atime, st.dev, st.ino, mode,
         st.nlink, st.uid, st.gid, st.rdev, st.size,
-        nil, nil)
+        blksize, blocks)
     rescue SystemCallError
       zero_stat_info
+    end
+
+    def windows?
+      RUBY_PLATFORM =~ /mswin|mingw|cygwin/
     end
 
     #

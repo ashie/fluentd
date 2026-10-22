@@ -43,23 +43,45 @@ class EventLoopCompatCoolioCompatibilityTest < Test::Unit::TestCase
     "timer one-shot still attached" => 'true',
   }.freeze
 
+  # Observations where the real cool.io extension is platform-specific.
+  # The compatibility layer keeps the feature working where libev does
+  # not support it, so the difference is pinned per platform.
+  WINDOWS_DIVERGENCES = {
+    # cool.io's AsyncWatcher is an IOWatcher on an anonymous pipe, and
+    # libev on Windows does not report readability for that pipe.
+    "async on_signal" => '1',
+  }.freeze
+
   def test_coolio_namespace_matches_real_cool_io
     real = run_probe('real')
     compat = run_probe('compat')
+    known = known_divergences
 
     assert_equal(real.keys, compat.keys, "the two probes reported different observations")
 
-    (real.keys - KNOWN_DIVERGENCES.keys).each do |key|
+    (real.keys - known.keys).each do |key|
       assert_equal(real[key], compat[key], "cool.io compatibility mismatch: #{key}")
     end
 
-    KNOWN_DIVERGENCES.each do |key, expected|
+    known.each do |key, expected|
       assert_equal(expected, compat[key], "undocumented change in the compatibility behaviour: #{key}")
       assert_not_equal(expected, real[key], "#{key} is not a divergence anymore")
     end
   end
 
   private
+
+  def known_divergences
+    if windows?
+      KNOWN_DIVERGENCES.merge(WINDOWS_DIVERGENCES)
+    else
+      KNOWN_DIVERGENCES
+    end
+  end
+
+  def windows?
+    RUBY_PLATFORM =~ /mswin|mingw|cygwin/
+  end
 
   def run_probe(backend)
     probe = File.expand_path('coolio_compare_probe.rb', __dir__)
@@ -74,6 +96,8 @@ class EventLoopCompatCoolioCompatibilityTest < Test::Unit::TestCase
     output = IO.popen([env, *cmd], err: [:child, :out], &:read)
     raise "cool.io #{backend} probe failed:\n#{output}" unless $?.success?
 
-    output.each_line.map { |line| line.chomp.split("\t", 2) }.to_h
+    output.each_line.filter_map do |line|
+      line.chomp.split("\t", 2) if line.include?("\t")
+    end.to_h
   end
 end

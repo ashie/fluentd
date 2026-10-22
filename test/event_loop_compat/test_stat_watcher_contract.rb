@@ -40,8 +40,10 @@ class EventLoopCompatStatWatcherContractTest < Test::Unit::TestCase
   # Members whose values must be identical across the two
   # implementations for the same file state. ino / mtime / ctime /
   # atime depend on when and where the file was created, so they are
-  # only checked for type and internal consistency.
-  STABLE_MEMBERS = [:dev, :mode, :nlink, :uid, :guid, :rdev, :size, :blksize, :blocks]
+  # only checked for type and internal consistency. blksize / blocks
+  # are not compared: the real cool.io extension fills them only when
+  # it is built with HAVE_ST_BLKSIZE, which is not the case everywhere.
+  STABLE_MEMBERS = [:dev, :mode, :nlink, :uid, :guid, :rdev, :size]
 
   def setup
     @errors = []

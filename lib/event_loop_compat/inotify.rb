@@ -16,8 +16,6 @@
 # polling only.
 #
 
-require 'fiddle'
-
 require 'event_loop_compat/io_watcher'
 
 module EventLoopCompat
@@ -44,6 +42,7 @@ module EventLoopCompat
     def self.functions
       return @functions if defined?(@functions)
       @functions = begin
+        require_fiddle
         libc = Fiddle.dlopen(nil)
         {
           init1: Fiddle::Function.new(libc['inotify_init1'],
@@ -54,13 +53,25 @@ module EventLoopCompat
           rm_watch: Fiddle::Function.new(libc['inotify_rm_watch'],
                                          [Fiddle::TYPE_INT, Fiddle::TYPE_INT], Fiddle::TYPE_INT),
         }
-      rescue LoadError, RuntimeError
+      rescue LoadError, StandardError
         nil
       end
     end
 
     def self.supported?
       !functions.nil?
+    end
+
+    def self.require_fiddle
+      return if defined?(Fiddle)
+
+      old = Warning[:deprecated]
+      Warning[:deprecated] = false
+      begin
+        require 'fiddle'
+      ensure
+        Warning[:deprecated] = old
+      end
     end
 
     def initialize(loop)
