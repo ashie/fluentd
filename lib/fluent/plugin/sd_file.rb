@@ -14,6 +14,8 @@
 #    limitations under the License.
 #
 
+require 'cool.io'
+
 require 'fluent/env'
 require 'fluent/plugin_helper'
 require 'fluent/plugin/service_discovery'
@@ -136,17 +138,7 @@ module Fluent
         raise Fluent::ConfigError, "#{e}. Service must have `host` and `port`"
       end
 
-      # PoC feature flag: pick the cool.io or the EventLoopCompat base
-      # class. The loop instance and the watchers must always come from
-      # the same implementation.
-      if Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat
-        require 'event_loop_compat'
-        STAT_WATCHER_BASE = EventLoopCompat::StatWatcher
-      else
-        STAT_WATCHER_BASE = Coolio::StatWatcher
-      end
-
-      class StatWatcher < STAT_WATCHER_BASE
+      class StatWatcher < Coolio::StatWatcher
         def initialize(path, log, &callback)
           @path = path
           @log = log
