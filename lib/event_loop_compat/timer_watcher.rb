@@ -12,7 +12,11 @@
 require 'event_loop_compat/watcher'
 
 module EventLoopCompat
-  class TimerWatcher < Watcher
+  # The behavior of a timer watcher, kept in a module so that the Coolio
+  # compatibility namespace (event_loop_compat/coolio.rb) can reuse it on
+  # top of Coolio::Watcher, which is required for the Coolio class
+  # hierarchy (Coolio::TimerWatcher < Coolio::Watcher) to match cool.io.
+  module TimerWatcherBehavior
     attr_reader :interval, :repeats
 
     def initialize(interval, repeats = false, &callback)
@@ -62,6 +66,8 @@ module EventLoopCompat
       @handle = nil
       return unless enabled?
 
+      @loop.__count_event__ if @loop.respond_to?(:__count_event__)
+
       begin
         on_timer
       rescue => e
@@ -76,8 +82,14 @@ module EventLoopCompat
       else
         # A one-shot timer is not re-armed: it stays attached but stops
         # firing, and the loop can exit when nothing else is active.
+        # cool.io leaves such a watcher "enabled" forever and its run
+        # never returns; disabling it here is a deliberate difference.
         __disable_flag__
       end
     end
+  end
+
+  class TimerWatcher < Watcher
+    include TimerWatcherBehavior
   end
 end

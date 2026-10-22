@@ -30,21 +30,20 @@ require 'event_loop_compat/watcher'
 require 'event_loop_compat/inotify'
 
 module EventLoopCompat
-  class StatWatcher < Watcher
-    # Same "automatic" default as libev's ev_stat.
-    DEFAULT_INTERVAL = 5.0
-
-    # Same name and member order as the cool.io C extension defines.
-    StatInfo = Struct.new(
-      :mtime, :ctime, :atime, :dev, :ino, :mode, :nlink,
-      :uid, :guid, :rdev, :size, :blksize, :blocks)
-
+  # The behavior of a stat watcher, kept in a module so that the Coolio
+  # compatibility namespace (event_loop_compat/coolio.rb) can reuse it on
+  # top of Coolio::Watcher, which is required for the Coolio class
+  # hierarchy (Coolio::StatWatcher < Coolio::Watcher) to match cool.io.
+  # The constants stay on EventLoopCompat::StatWatcher: cool.io defines no
+  # constant under Coolio::StatWatcher, and the struct its C extension
+  # creates is the top-level Struct::StatInfo.
+  module StatWatcherBehavior
     attr_reader :path, :interval
 
     def initialize(path, interval = nil, &callback)
       interval = interval.nil? ? 0 : Float(interval)
       @path = path
-      @interval = interval == 0 ? DEFAULT_INTERVAL : interval
+      @interval = interval == 0 ? EventLoopCompat::StatWatcher::DEFAULT_INTERVAL : interval
       @callback = callback
       @handle = nil
       @deadline = nil
@@ -152,14 +151,14 @@ module EventLoopCompat
 
     def zero_stat_info
       epoch = Time.at(0)
-      StatInfo.new(epoch, epoch, epoch, 0, 0, 0, 0, 0, 0, 0, 0, nil, nil)
+      EventLoopCompat::StatWatcher::StatInfo.new(epoch, epoch, epoch, 0, 0, 0, 0, 0, 0, 0, 0, nil, nil)
     end
 
     def stat_info
       st = File.stat(@path)
       # cool.io 1.9.0 never fills blksize / blocks (its extension does
       # not define HAVE_ST_BLKSIZE), so they stay nil here as well.
-      StatInfo.new(
+      EventLoopCompat::StatWatcher::StatInfo.new(
         st.mtime, st.ctime, st.atime, st.dev, st.ino, st.mode,
         st.nlink, st.uid, st.gid, st.rdev, st.size,
         nil, nil)
@@ -222,5 +221,27 @@ module EventLoopCompat
         @inotify = nil
       end
     end
+  end
+
+  class StatWatcher < Watcher
+    # Same "automatic" default as libev's ev_stat.
+    DEFAULT_INTERVAL = 5.0
+
+    # Same name, member order and enclosing class as the struct the
+    # cool.io C extension defines (Struct::StatInfo), while keeping the
+    # EventLoopCompat::StatWatcher::StatInfo alias used by the tests and
+    # by plugins that refer to the struct class.
+    if Struct.const_defined?(:StatInfo, false)
+      # The real cool.io extension was loaded first and defined the same
+      # struct; reuse it instead of warning about a redefinition.
+      StatInfo = Struct::StatInfo
+    else
+      StatInfo = Struct.new(
+        "StatInfo",
+        :mtime, :ctime, :atime, :dev, :ino, :mode, :nlink,
+        :uid, :guid, :rdev, :size, :blksize, :blocks)
+    end
+
+    include StatWatcherBehavior
   end
 end

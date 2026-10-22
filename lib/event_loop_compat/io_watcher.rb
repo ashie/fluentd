@@ -19,24 +19,22 @@
 require 'event_loop_compat/watcher'
 
 module EventLoopCompat
-  class IOWatcher < Watcher
-    FLAGS = {
-      r: IO::READABLE,
-      w: IO::WRITABLE,
-      rw: IO::READABLE | IO::WRITABLE,
-    }
-
+  # The behavior of an IO watcher, kept in a module so that the Coolio
+  # compatibility namespace (event_loop_compat/coolio.rb) can reuse it on
+  # top of Coolio::Watcher, which is required for the Coolio class
+  # hierarchy (Coolio::IOWatcher < Coolio::Watcher) to match cool.io.
+  module IOWatcherBehavior
     attr_reader :io
 
     def initialize(io, flags = :r, &callback)
-      unless FLAGS.key?(flags)
+      unless EventLoopCompat::IOWatcher::FLAGS.key?(flags)
         raise ArgumentError, "unsupported flags: #{flags.inspect} (use :r, :w or :rw)"
       end
       if callback && flags == :rw
         raise ArgumentError, "the block form supports :r or :w only"
       end
       @io = io
-      @events_mask = FLAGS[flags]
+      @events_mask = EventLoopCompat::IOWatcher::FLAGS[flags]
       @callback = callback
       @fiber = nil
       @park_reader = nil
@@ -198,5 +196,15 @@ module EventLoopCompat
       @park_reader = nil
       @park_writer = nil
     end
+  end
+
+  class IOWatcher < Watcher
+    FLAGS = {
+      r: IO::READABLE,
+      w: IO::WRITABLE,
+      rw: IO::READABLE | IO::WRITABLE,
+    }
+
+    include IOWatcherBehavior
   end
 end

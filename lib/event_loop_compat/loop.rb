@@ -51,6 +51,7 @@ module EventLoopCompat
       # (run_once mode), and the runtimes started during such calls.
       @started = {}
       @idle_runtimes = []
+      @event_count = 0
     end
 
     def timers
@@ -89,6 +90,14 @@ module EventLoopCompat
     end
 
     def attach(watcher)
+      __attach_watcher__(watcher)
+    end
+
+    # Internal hook used by the Coolio compatibility layer. Coolio::Loop#attach
+    # delegates to Coolio::Watcher#attach, and Coolio::Watcher#attach calls
+    # this method back on the loop; keeping the bookkeeping here avoids the
+    # recursion that would otherwise happen between those two public methods.
+    def __attach_watcher__(watcher)
       if composite_watcher?(watcher)
         # BufferedIO-like objects are not Watchers themselves (they own
         # internal watchers), but Coolio::IO is a watcher and is passed
@@ -264,12 +273,14 @@ module EventLoopCompat
         end
         process_commands(@idle_runtimes)
         duration = run_duration(timeout)
-        @selector.select(duration)
+        @event_count = 0
+        ready = @selector.select(duration)
+        @event_count += ready.to_i if ready
         @timers.fire
       ensure
         @loop_thread = nil
       end
-      self
+      @event_count
     end
 
     # Request the loop to stop. Safe to call from any thread and safe to
@@ -294,6 +305,13 @@ module EventLoopCompat
       rescue
         # errors in the error handler are ignored
       end
+    end
+
+    # Internal hook used by watchers that cannot be counted by the selector
+    # itself (timer callbacks). run_once reports the total number of events
+    # dispatched during its single iteration.
+    def __count_event__
+      @event_count += 1
     end
 
     private
