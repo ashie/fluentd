@@ -16,26 +16,14 @@
 
 require 'ipaddr'
 
+require 'cool.io'
+
 require 'fluent/plugin'
 require 'fluent/input'
-require 'fluent/plugin_helper/event_loop'
 
 module Fluent
   module Compat
     module SocketUtil
-      # PoC feature flag: pick the cool.io or the EventLoopCompat base
-      # classes and loop. The loop instance and the watchers must always
-      # come from the same implementation.
-      if Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat
-        IO_BASE = EventLoopCompat::BufferedIO
-        SOCKET_BASE = EventLoopCompat::Socket
-        LOOP_BASE = EventLoopCompat::Loop
-      else
-        IO_BASE = Coolio::IO
-        SOCKET_BASE = Coolio::Socket
-        LOOP_BASE = Coolio::Loop
-      end
-
       def create_udp_socket(host)
         if IPAddr.new(IPSocket.getaddress(host)).ipv4?
           UDPSocket.new
@@ -45,7 +33,7 @@ module Fluent
       end
       module_function :create_udp_socket
 
-      class UdpHandler < IO_BASE
+      class UdpHandler < Coolio::IO
         def initialize(io, log, body_size_limit, callback)
           super(io)
           @io = io
@@ -63,7 +51,7 @@ module Fluent
         end
       end
 
-      class TcpHandler < SOCKET_BASE
+      class TcpHandler < Coolio::Socket
         PEERADDR_FAILED = ["?", "?", "name resolution failed", "?"]
 
         def initialize(io, log, delimiter, callback)
@@ -133,7 +121,7 @@ module Fluent
         def start
           super
 
-          @loop = LOOP_BASE.new
+          @loop = Coolio::Loop.new
           @handler = listen(method(:on_message))
           @loop.attach(@handler)
           @thread = Thread.new(&method(:run))

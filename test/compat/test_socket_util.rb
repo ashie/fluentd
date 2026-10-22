@@ -16,15 +16,8 @@ class CompatSocketUtilTest < ::Test::Unit::TestCase
   end
 
   def test_base_classes_match_the_selected_backend
-    if Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat
-      assert_equal EventLoopCompat::Loop, SocketUtil::LOOP_BASE
-      assert_equal EventLoopCompat::Socket, SocketUtil::SOCKET_BASE
-      assert_equal EventLoopCompat::BufferedIO, SocketUtil::IO_BASE
-    else
-      assert_equal Coolio::Loop, SocketUtil::LOOP_BASE
-      assert_equal Coolio::Socket, SocketUtil::SOCKET_BASE
-      assert_equal Coolio::IO, SocketUtil::IO_BASE
-    end
+    assert_equal Coolio::Socket, SocketUtil::TcpHandler.superclass
+    assert_equal Coolio::IO, SocketUtil::UdpHandler.superclass
   end
 
   # The legacy input API must keep working on the selected backend:
@@ -37,7 +30,7 @@ class CompatSocketUtilTest < ::Test::Unit::TestCase
 
     messages = []
     handler = SocketUtil::TcpHandler.new(io, $log, "\n", ->(msg, _addr) { messages << msg })
-    evloop = SocketUtil::LOOP_BASE.new
+    evloop = Coolio::Loop.new
     handler.attach(evloop)
 
     runner = Thread.new { evloop.run(0.1) }

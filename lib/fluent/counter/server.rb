@@ -14,6 +14,7 @@
 #    limitations under the License.
 #
 
+require 'cool.io'
 require 'fluent/counter/base_socket'
 require 'fluent/counter/validator'
 require 'fluent/counter/store'
@@ -31,13 +32,13 @@ module Fluent
         @opt = opt
         @addr = @opt[:addr] || DEFAULT_ADDR
         @port = @opt[:port] || DEFAULT_PORT
-        @loop = @opt[:loop] || LOOP_BASE.new
+        @loop = @opt[:loop] || Coolio::Loop.new
         @log =  @opt[:log] || $log
 
         @store = Fluent::Counter::Store.new(opt)
         @mutex_hash = MutexHash.new(@store)
 
-        @server = TCPSERVER_BASE.new(@addr, @port, Handler, method(:on_message))
+        @server = Coolio::TCPServer.new(@addr, @port, Handler, method(:on_message))
         @thread = nil
         @running = false
       end

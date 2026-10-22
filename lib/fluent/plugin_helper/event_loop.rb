@@ -14,6 +14,7 @@
 #    limitations under the License.
 #
 
+require 'cool.io'
 require 'fluent/plugin_helper/thread'
 require 'fluent/clock'
 
@@ -28,18 +29,7 @@ require 'fluent/clock'
 module Fluent
   module PluginHelper
     module EventLoop
-      EVENT_LOOP_BACKEND =
-        if ENV['FLUENTD_EVENT_LOOP_BACKEND'] == 'io_event_compat'
-          require 'event_loop_compat'
-          # Plugins written against cool.io may use the Coolio constants
-          # without requiring the gem, because the cool.io backend always
-          # loads it. Define the compatibility namespace here instead.
-          require 'event_loop_compat/coolio'
-          :io_event_compat
-        else
-          require 'cool.io'
-          :coolio
-        end
+      EVENT_LOOP_BACKEND = ENV['FLUENTD_EVENT_LOOP_BACKEND'] == 'io_event_compat' ? :io_event_compat : :coolio
 
       # Currently this plugin helper is only for other helpers, not plugins.
       # there's no way to create customized watchers to attach event loops.
@@ -93,7 +83,16 @@ module Fluent
 
       def initialize
         super
-        @_event_loop = new_event_loop
+        @_event_loop = Coolio::Loop.new
+        if EVENT_LOOP_BACKEND == :io_event_compat
+          @_event_loop.error_handler = ->(_watcher, error) {
+            begin
+              log.error "Unexpected error raised in event loop watcher", error: error
+            rescue
+              # log may not be available
+            end
+          }
+        end
         @_event_loop_running = false
         @_event_loop_mutex = Mutex.new
         # plugin MAY configure loop run timeout in #configure
@@ -107,7 +106,7 @@ module Fluent
         # event loop does not run here, so mutex lock is not required
         thread_create :event_loop do
           begin
-            default_watcher = new_default_watcher
+            default_watcher = DefaultWatcher.new
             event_loop_attach(default_watcher)
             @_event_loop_running = true
             @_event_loop.run(@_event_loop_run_timeout) # this method blocks
@@ -178,43 +177,14 @@ module Fluent
       end
 
       # watcher to block to run event loop until shutdown
-      if EVENT_LOOP_BACKEND == :io_event_compat
-        class DefaultWatcher < EventLoopCompat::TimerWatcher
-          def initialize
-            super(1, true) # interval: 1, repeat: true
-          end
-          # do nothing
-          def on_timer; end
+      class DefaultWatcher < Coolio::TimerWatcher
+        def initialize
+          super(1, true) # interval: 1, repeat: true
         end
-      else
-        class DefaultWatcher < Coolio::TimerWatcher
-          def initialize
-            super(1, true) # interval: 1, repeat: true
-          end
-          # do nothing
-          def on_timer; end
-        end
+        # do nothing
+        def on_timer; end
       end
 
-      private
-
-      def new_event_loop
-        if EVENT_LOOP_BACKEND == :io_event_compat
-          EventLoopCompat::Loop.new(error_handler: ->(_watcher, error) {
-            begin
-              log.error "Unexpected error raised in event loop watcher", error: error
-            rescue
-              # log may not be available
-            end
-          })
-        else
-          Coolio::Loop.new
-        end
-      end
-
-      def new_default_watcher
-        DefaultWatcher.new
-      end
     end
   end
 end

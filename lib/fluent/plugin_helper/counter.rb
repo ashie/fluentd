@@ -20,8 +20,7 @@ require 'fluent/counter/client'
 module Fluent
   module PluginHelper
     module Counter
-      def counter_client_create(scope:, loop: nil)
-        loop ||= Fluent::Counter::LOOP_BASE.new
+      def counter_client_create(scope:, loop: Coolio::Loop.new)
         client_conf = system_config.counter_client
         raise Fluent::ConfigError, '<counter_client> is required in <system>' unless client_conf
         counter_client = Fluent::Counter::Client.new(loop, port: client_conf.port, host: client_conf.host, log: log, timeout: client_conf.timeout)

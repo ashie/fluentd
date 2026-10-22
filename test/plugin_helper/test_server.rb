@@ -170,7 +170,7 @@ class ServerPluginHelperTest < Test::Unit::TestCase
 
       created_server = created_server_info.server
 
-      assert created_server.is_a?(Fluent::PluginHelper::Server::LISTENER_BASE)
+      assert created_server.is_a?(Coolio::TCPServer)
       assert_equal "0.0.0.0", created_server.instance_eval{ @listen_socket }.addr[3]
     end
 
@@ -181,7 +181,7 @@ class ServerPluginHelperTest < Test::Unit::TestCase
       created_server_info = @d._servers.first
       assert_equal :tcp, created_server_info.proto
       created_server = created_server_info.server
-      assert created_server.is_a?(Fluent::PluginHelper::Server::LISTENER_BASE)
+      assert created_server.is_a?(Coolio::TCPServer)
     end
 
     data(methods)
@@ -206,7 +206,7 @@ class ServerPluginHelperTest < Test::Unit::TestCase
       created_server_info = @d._servers.first
       assert_equal :tcp, created_server_info.proto
       created_server = created_server_info.server
-      assert created_server.is_a?(Fluent::PluginHelper::Server::LISTENER_BASE)
+      assert created_server.is_a?(Coolio::TCPServer)
     end
 
     data(methods)
@@ -219,7 +219,7 @@ class ServerPluginHelperTest < Test::Unit::TestCase
       created_server_info = @d._servers.first
       assert_equal :tls, created_server_info.proto
       created_server = created_server_info.server
-      assert created_server.is_a?(Fluent::PluginHelper::Server::LISTENER_BASE) # yes, TCP here
+      assert created_server.is_a?(Coolio::TCPServer) # yes, TCP here
     end
 
     data(methods)
@@ -244,7 +244,7 @@ class ServerPluginHelperTest < Test::Unit::TestCase
       created_server_info = @d._servers.first
       assert_equal :tls, created_server_info.proto
       created_server = created_server_info.server
-      assert created_server.is_a?(Fluent::PluginHelper::Server::LISTENER_BASE) # OK, it's Coolio::TCPServer
+      assert created_server.is_a?(Coolio::TCPServer) # OK, it's Coolio::TCPServer
     end
 
     data(methods)
