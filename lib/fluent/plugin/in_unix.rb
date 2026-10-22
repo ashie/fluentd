@@ -42,18 +42,6 @@ module Fluent::Plugin
     desc "New tag instead of incoming tag"
     config_param :tag, :string, default: nil
 
-    # PoC feature flag: pick the cool.io or the EventLoopCompat base
-    # classes. The loop instance and the watchers must always come
-    # from the same implementation.
-    if Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat
-      require 'event_loop_compat'
-      UNIX_SERVER_BASE = EventLoopCompat::UNIXServer
-      HANDLER_BASE = EventLoopCompat::Socket
-    else
-      UNIX_SERVER_BASE = Coolio::UNIXServer
-      HANDLER_BASE = Coolio::Socket
-    end
-
     def configure(conf)
       super
     end
@@ -82,7 +70,7 @@ module Fluent::Plugin
       FileUtils.mkdir_p(File.dirname(@path))
 
       log.info "listening fluent socket on #{@path}"
-      s = UNIX_SERVER_BASE.new(@path, Handler, log, method(:on_message))
+      s = Coolio::UNIXServer.new(@path, Handler, log, method(:on_message))
       s.listen(@backlog) unless @backlog.nil?
       s
     end
@@ -154,7 +142,7 @@ module Fluent::Plugin
       end
     end
 
-    class Handler < HANDLER_BASE
+    class Handler < Coolio::Socket
       def initialize(io, log, on_message)
         super(io)
 
