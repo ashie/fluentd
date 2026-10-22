@@ -1,7 +1,22 @@
 # io-event Coolio compatibility
 
-This document describes the compatibility layer used when
-`FLUENTD_EVENT_LOOP_BACKEND=io_event_compat` is set.
+## Motivation and scope
+
+Fluentd uses cool.io for its event loop, and cool.io depends on libev. The
+Fluentd team can maintain cool.io, so replacing it is not an immediate
+requirement. However, libev's upstream maintenance has been limited, and
+changes around Ruby's asynchronous IO can break the stack. It is useful to
+know whether Fluentd has a viable alternative if maintaining it becomes
+difficult.
+
+This proof of concept uses io-event's low-level primitives and asks a more
+specific question than whether Fluentd's own tests pass: can Fluentd and its
+plugin ecosystem continue to use the Coolio API, including `require 'cool.io'`,
+while the event loop implementation changes? It is an opt-in evaluation, not a
+decision to replace cool.io. The default backend remains the real cool.io gem.
+
+This document describes the compatibility layer selected by
+`FLUENTD_EVENT_LOOP_BACKEND=io_event_compat` and the limits of that evaluation.
 
 ## Loading
 
@@ -23,10 +38,11 @@ This document describes the compatibility layer used when
 
 `lib/event_loop_compat/coolio.rb` defines the `Coolio` namespace on top of
 `EventLoopCompat`. It refuses to load if the real cool.io extension is already
-loaded. The event loop helper loads it when the compat backend is selected, so
-a plugin that uses the `Coolio` constants without requiring the gem keeps
-working, as it does with the real gem. The `event_loop_compat` entry point does
-not load it, because the tests compare the two implementations in one process.
+loaded. Fluentd's `fluent/load.rb` and event loop helper both require
+`cool.io`, so the shim selects the namespace early enough for plugins that
+reference `Coolio` without an explicit require. The `event_loop_compat` entry
+point alone does not define `Coolio`; comparison tests load the implementations
+in separate child processes.
 
 Loading both implementations in one process is not supported in any order:
 
@@ -37,8 +53,16 @@ Loading both implementations in one process is not supported in any order:
 | real cool.io | `require 'event_loop_compat/coolio'` | `LoadError` from the namespace |
 | compatibility namespace | real cool.io | `TypeError: superclass mismatch for class Coolio::Loop` |
 
-Bundler loads the real gem when it is in the `Gemfile`, so a deployment using
-the compat backend must not require the `cool.io` gem.
+The gemspec still declares cool.io as a runtime dependency, and the gem must
+remain available for the default backend and for its `coolio.rb` require alias.
+Having it installed or activated by Bundler does not itself load the real
+extension. With the compat backend, do not explicitly require the gem's
+`cool.io.rb` by absolute path or otherwise bypass the shim.
+
+The bundled plugins, counter subsystem, server and timer helpers, and legacy
+socket API use the `Coolio` interface on both backends. Their production source
+is unchanged from master; only the event loop helper retains a backend-specific
+error handler. The io-event implementation and load-path shim are new files.
 
 ## Implemented public API
 
@@ -61,7 +85,7 @@ the compat backend must not require the `cool.io` gem.
 | `Coolio::IOWatcher` | Implemented | Accepts cool.io string flags. |
 | `Coolio::TimerWatcher` | Implemented | Includes `reset`. |
 | `Coolio::StatWatcher` | Implemented | Subclass with `on_change`, like real cool.io. |
-| `Coolio::StatWatcher::StatInfo` | Implemented | Named `Struct::StatInfo` with the member order of the C extension. |
+| `Struct::StatInfo` | Implemented | Same member order as the C extension; neither backend defines `Coolio::StatWatcher::StatInfo`. |
 | `Coolio::AsyncWatcher` | Implemented | Uses an `IO.pipe` like real cool.io. |
 | `Coolio::Buffer` | Approximate | Pure Ruby approximation. |
 | `Coolio::IO` | Implemented | Uses an internal `Coolio::IO::Watcher`, like real cool.io. |
@@ -113,14 +137,23 @@ than against a copy of them written by hand.
 the table above.
 
 `test/plugin_helper/test_event_loop_coolio_watchers.rb` attaches timer, IO and
-stat watchers to the loop created by the event loop helper, which is what
-external plugins do.
+stat watchers to the `Coolio::Loop` created by the event loop helper, which is
+what external plugins do. `test/compat/test_socket_util.rb` exercises the
+legacy socket API through the same public namespace.
+
+These probes cover representative API contracts, not every behavior of the C
+extension or every external plugin. After the latest core-diff reduction, the
+focused compatibility and integration tests passed on both backends. A compat
+full-suite run was stopped by a 10-minute limit after 3,201 tests with no
+failures or errors at that point; this is not a completed full-suite result.
+Windows has not been tested on a Windows host.
 
 ## Differences from cool.io
 
-These are the differences the comparison test pins down. Everything else in
-the probe matches the real gem. For each one, why it is kept, what it means for
-a plugin, and what a plugin can do instead are written down.
+These are the differences the comparison test pins down. Other observations
+in that probe match the real gem; behavior outside the probe is not guaranteed.
+For each difference, why it is kept, what it means for a plugin, and what a
+plugin can do instead are written down.
 
 ### Re-attaching an attached watcher
 
@@ -130,8 +163,8 @@ a plugin, and what a plugin can do instead are written down.
 - Why it is kept: that error is an accident of how the C extension calls the
   loop's `attach` a second time, not a documented contract, and there is no
   second `attach` implementation to reproduce it with.
-- Effect on plugins: attaching twice works here and raises with cool.io. Nothing
-  in the ecosystem depends on the exception.
+- Effect on plugins: attaching twice works here and raises with cool.io. The
+  tested plugin scenarios do not rely on that exception.
 - Instead: ask `attached?` before attaching, as plugins already have to do to
   avoid the exception.
 
@@ -143,7 +176,7 @@ a plugin, and what a plugin can do instead are written down.
 - Why it is kept: there is no libev backend to select; io-event uses one
   selector per loop and chooses the mechanism itself.
 - Effect on plugins: code reading `Coolio::Loop::EVBACKEND_KQUEUE` gets a
-  `NameError`. Nothing in the ecosystem reads them; only the gem's own specs do.
+  `NameError`. The tested plugin scenarios do not read these constants.
 - Instead: do not select a backend.
 
 ### `Coolio::TCPSocket::TCPConnectResolver` and asynchronous DNS
@@ -156,7 +189,8 @@ synchronously.
   new API rather than compatibility.
 - Effect on plugins: the first `connect` to a hostname blocks the thread that
   calls it. Subclasses of `Coolio::TCPSocket` work; code that references
-  `TCPConnectResolver` or `TCPConnectSocket` by name fails with `NameError`.
+  `TCPConnectResolver` by name fails with `NameError`. `TCPConnectSocket` is
+  present in the compatibility layer.
 - Instead: resolve the address before connecting, or use `IPAddr` literals.
 
 ### The attributes of a removed or missing path
@@ -190,8 +224,8 @@ callback calls `stop`.
   bookkeeping bug and not a contract. Reproducing it would make the
   compatibility loop wait forever for an event that can never happen.
 - Effect on plugins: a plugin whose last remaining watcher is a fired one-shot
-  timer returns from `run` here and hangs with cool.io, so no plugin can depend
-  on the hang. A plugin that re-arms a one-shot timer with `enable` gets a
+  timer returns from `run` here and hangs with cool.io in the probed scenario.
+  A plugin that re-arms a one-shot timer with `enable` gets a
   working timer here and `RuntimeError: already enabled` with cool.io.
 - Instead: keep the loop alive with a repeating watcher, which is what the event
   loop helper does with its default watcher, and re-arm with `reset`.
@@ -211,8 +245,8 @@ cool.io returns the truthy Integer `0`.
 - `run_once` event counts are approximate. IO events are counted from the
   selector ready count; timer callbacks increment a counter. This is not
   guaranteed to match libev event counts exactly.
-- `Coolio::Buffer` is a pure-Ruby approximation and is not validated against
-  the real C extension behavior.
+- `Coolio::Buffer` is a pure-Ruby approximation. Its basic probed behavior is
+  compared with the real C extension, but it has not been exhaustively validated.
 - `Coolio::DNSResolver` is implemented but not directly tested.
 - `Coolio::TCPSocket.connect` resolves hostnames synchronously with
   `Addrinfo.getaddrinfo`; real cool.io uses asynchronous DNS resolution.
