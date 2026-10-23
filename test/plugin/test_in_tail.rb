@@ -47,6 +47,12 @@ class TailInputTest < Test::Unit::TestCase
     Fluent::Plugin::TailInput::TargetInfo.new(path, Fluent::FileWrapper.stat(path).ino)
   end
 
+  def file_change_notifications?
+    # The compat StatWatcher has no Windows filesystem notification backend;
+    # without the watch timer it only checks on its polling interval.
+    Fluent.linux? || (Fluent.windows? && Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :coolio)
+  end
+
   ROOT_CONFIG = config_element("ROOT", "", {
                             "tag" => "t1",
                             "rotate_wait" => "2s",
@@ -667,7 +673,7 @@ class TailInputTest < Test::Unit::TestCase
             require 'fluent/config/types'
             limit_bytes_value = Fluent::Config.size_value(limit_bytes)
             io_handler.instance_variable_set(:@number_bytes_read, limit_bytes_value)
-            if Fluent.linux? || Fluent.windows?
+            if file_change_notifications?
               mock.proxy(io_handler).handle_notify.at_least(5)
             else
               mock.proxy(io_handler).handle_notify.twice
@@ -683,7 +689,7 @@ class TailInputTest < Test::Unit::TestCase
 
           # We should not do shutdown here due to hard timeout.
           d.run do
-            if Fluent.linux? || Fluent.windows?
+            if file_change_notifications?
               # Other platforms receive no stat notification while appending, so it
               # would just consume the throttling window and make this test flaky.
               start_time = Fluent::Clock.now
@@ -1621,7 +1627,7 @@ class TailInputTest < Test::Unit::TestCase
 
     # https://github.com/fluent/fluentd/pull/3541#discussion_r740197711
     def test_watch_wildcard_path_without_watch_timer
-      omit "need file change notifications" unless Fluent.linux? || Fluent.windows?
+      omit "need file change notifications" unless file_change_notifications?
 
       config = config_element("ROOT", "", {
                                 "path" => "#{@tmp_dir}/tail*.txt",
@@ -4971,7 +4977,7 @@ class TailInputTest < Test::Unit::TestCase
     end
 
     test "a rotated file keeps being read under a group limit without the watch timer" do
-      omit "need file change notifications" unless Fluent.linux? || Fluent.windows?
+      omit "need file change notifications" unless file_change_notifications?
       pattern = "/^#{@tmp_dir}\/(?<file>.+)\.log.*$/"
       rule = create_rule_directive({ "file" => "/.*/" }, 1)
       config = config_element(
@@ -5010,7 +5016,7 @@ class TailInputTest < Test::Unit::TestCase
     end
 
     test "a transient emit error does not stop draining a rotated file without the watch timer" do
-      omit "need file change notifications" unless Fluent.linux? || Fluent.windows?
+      omit "need file change notifications" unless file_change_notifications?
       pattern = "/^#{@tmp_dir}\/(?<file>.+)\.log.*$/"
       rule = create_rule_directive({ "file" => "/.*/" }, 1)
       config = config_element(
