@@ -209,10 +209,10 @@ legacy socket API through the same public namespace.
 
 These probes cover representative API contracts, not every behavior of the C
 extension or every external plugin. The focused compatibility and integration
-tests pass on both backends locally. GitHub Actions runs the full suite on
-Linux, macOS and Windows, but its current workflow does not set
-`FLUENTD_EVENT_LOOP_BACKEND`, so those runs cover the default backend plus the
-standalone compatibility tests, not a compat-backend full suite. A local compat
+tests pass on both backends locally. GitHub Actions runs the default backend
+on Linux, macOS and Windows across its Ruby version matrix, and additionally
+runs the full suite with `FLUENTD_EVENT_LOOP_BACKEND=io_event_compat` on Ruby
+4.0 for all four OS targets (including Windows ARM). A local compat
 full-suite run was stopped by a 10-minute limit after 3,201 tests with no
 failures or errors at that point; this is not a completed full-suite result.
 The cross-platform CI failures found so far are being addressed separately;
