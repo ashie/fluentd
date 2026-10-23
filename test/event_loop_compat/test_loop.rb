@@ -284,6 +284,33 @@ class EventLoopCompatTest < Test::Unit::TestCase
     w.close rescue nil
   end
 
+  def test_retries_enotsock_once_when_selecting
+    attempts = 0
+    selector = Object.new
+    selector.define_singleton_method(:select) do |timeout|
+      attempts += 1
+      raise Errno::ENOTSOCK if attempts == 1
+      timeout
+    end
+    @loop.instance_variable_set(:@selector, selector)
+
+    assert_equal(0, @loop.send(:select_with_closed_socket_retry, 1))
+    assert_equal(2, attempts)
+  end
+
+  def test_persistent_enotsock_is_not_swallowed
+    attempts = 0
+    selector = Object.new
+    selector.define_singleton_method(:select) do |_timeout|
+      attempts += 1
+      raise Errno::ENOTSOCK
+    end
+    @loop.instance_variable_set(:@selector, selector)
+
+    assert_raise(Errno::ENOTSOCK) { @loop.send(:select_with_closed_socket_retry, 1) }
+    assert_equal(2, attempts)
+  end
+
   #
   # loop control
   #

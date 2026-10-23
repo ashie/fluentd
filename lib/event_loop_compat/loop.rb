@@ -217,7 +217,7 @@ module EventLoopCompat
           # so re-check before blocking in select.
           break if @stop_requested || active_count == 0
           duration = run_duration(timeout)
-          @selector.select(duration)
+          select_with_closed_socket_retry(duration)
           @timers.fire
         end
       ensure
@@ -274,7 +274,7 @@ module EventLoopCompat
         process_commands(@idle_runtimes)
         duration = run_duration(timeout)
         @event_count = 0
-        ready = @selector.select(duration)
+        ready = select_with_closed_socket_retry(duration)
         @event_count += ready.to_i if ready
         @timers.fire
       ensure
@@ -415,6 +415,15 @@ module EventLoopCompat
       # A timer may already be due between wait_interval and fire:
       # ::IO.select rejects negative timeouts, so clamp to zero.
       duration && (duration < 0 ? 0.0 : duration)
+    end
+
+    def select_with_closed_socket_retry(duration)
+      @selector.select(duration)
+    rescue Errno::ENOTSOCK
+      # Windows reports ENOTSOCK, rather than EBADF, if another thread
+      # closes a socket while io-event's Select backend is in IO.select.
+      # The next select rebuilds its IO lists and drops closed sockets.
+      @selector.select(0)
     end
   end
 end
