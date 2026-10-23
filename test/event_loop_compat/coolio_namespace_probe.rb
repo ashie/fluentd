@@ -140,6 +140,22 @@ check(data == "x", "Coolio::TCPServer must echo data, got #{data.inspect}")
 client.close
 server.close
 
+# Closing a listener from another thread must defer closing the socket
+# until its selector fiber has stopped (especially important on Windows).
+listener = Coolio::TCPListener.new('127.0.0.1', 0)
+loop = Coolio::Loop.new
+listener.attach(loop)
+thread = Thread.new { loop.run(0.1) }
+100.times do
+  break if listener.instance_variable_get(:@fiber)
+  sleep 0.01
+end
+check(listener.instance_variable_get(:@fiber), "listener fiber did not start")
+listener.close
+check(thread.join(2), "loop did not stop after listener close")
+thread.value
+check(listener.instance_variable_get(:@listen_socket).closed?, "listener socket was not closed")
+
 buffer = Coolio::Buffer.new
 buffer << "abc"
 check(buffer.size == 3, "Buffer#size must report buffered bytes")

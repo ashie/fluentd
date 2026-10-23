@@ -616,11 +616,6 @@ module Coolio
       @listen_socket.listen(backlog)
     end
 
-    def close
-      detach if attached?
-      super
-    end
-
     def on_connection(socket); end
     event_callback :on_connection
 

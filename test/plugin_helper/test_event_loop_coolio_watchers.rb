@@ -76,8 +76,13 @@ class EventLoopCoolioWatchersTest < Test::Unit::TestCase
     peer.write "hello"
     assert_equal "hello", wait_for(readable)
 
-    watcher.detach
-    client.close
+    if watcher.respond_to?(:close)
+      # The compat watcher defers closing until its selector fiber exits.
+      watcher.close
+    else
+      watcher.detach
+      client.close
+    end
     peer.close
     server.close
   end
