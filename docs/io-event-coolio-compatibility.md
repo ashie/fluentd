@@ -22,6 +22,25 @@ plugin ecosystem continue to use the Coolio API, including `require 'cool.io'`,
 while the event loop implementation changes? It is an opt-in evaluation, not a
 decision to replace cool.io. The default backend remains the real cool.io gem.
 
+The [Fluentd roadmap](https://github.com/fluent/fluentd/wiki/Roadmap-and-Development-tasks)
+lists Ractor-based concurrency for v2 and "Replace cool.io with async" for v1.
+Replacing the Coolio API with Async's task API is not a realistic drop-in
+migration for existing plugins that subclass Coolio watchers or use its loops
+and socket classes. This PoC instead preserves that API while replacing the
+event loop underneath it with io-event, the lower-level library used by Async.
+It does not rule out using Async directly in new code.
+
+Ractor compatibility is another possible longer-term benefit. In a Ruby 3.3
+probe, cool.io 1.9.0's native loop could not be constructed in a non-main
+Ractor (`Ractor::UnsafeError`), whereas [io-event 1.16.1 declares its native
+extension Ractor-safe when Ruby supports it](https://github.com/socketry/io-event/blob/v1.16.1/ext/io/event/event.c).
+In the same environment, a minimal compatibility loop and one-shot timer ran
+inside a non-main Ractor. This could remove one obstacle to future
+Ractor-based Fluentd designs, but the smoke test does **not** establish that
+this Coolio compatibility layer, Fluentd as a whole, or third-party plugins
+are Ractor-safe. Their mutable state, callbacks, loading and cross-Ractor
+communication still need separate design and tests.
+
 This document describes the compatibility layer selected by
 `FLUENTD_EVENT_LOOP_BACKEND=io_event_compat` and the limits of that evaluation.
 
