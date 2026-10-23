@@ -66,6 +66,8 @@ Gem::Specification.new do |gem|
 
   # gems that aren't default gems as of Ruby 4.0
   gem.add_runtime_dependency("ostruct", ["~> 0.6"])
+  # The io-event compat backend uses Fiddle for Linux inotify.
+  gem.add_runtime_dependency("fiddle", ["~> 1.1"])
 
   # build gem for a certain platform. see also Rakefile
   fake_platform = ENV['GEM_BUILD_FAKE_PLATFORM'].to_s
@@ -75,9 +77,6 @@ Gem::Specification.new do |gem|
     gem.add_runtime_dependency("win32-ipc", ["~> 0.7.0"])
     gem.add_runtime_dependency("win32-event", ["~> 0.6.3"])
     gem.add_runtime_dependency("certstore_c", ["~> 0.1.7"])
-
-    # gems that aren't default gems as of Ruby 3.5
-    gem.add_runtime_dependency("fiddle", ["~> 1.1"])
 
     # gems that aren't default gems as of Ruby 4.1
     gem.add_runtime_dependency("win32-registry", ["~> 0.1"])

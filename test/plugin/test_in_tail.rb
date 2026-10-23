@@ -48,9 +48,11 @@ class TailInputTest < Test::Unit::TestCase
   end
 
   def file_change_notifications?
-    # The compat StatWatcher has no Windows filesystem notification backend;
-    # without the watch timer it only checks on its polling interval.
-    Fluent.linux? || (Fluent.windows? && Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :coolio)
+    if Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat
+      EventLoopCompat::Inotify.supported?
+    else
+      Fluent.linux? || Fluent.windows?
+    end
   end
 
   ROOT_CONFIG = config_element("ROOT", "", {
