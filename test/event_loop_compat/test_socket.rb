@@ -174,12 +174,37 @@ class EventLoopCompatSocketTest < Test::Unit::TestCase
     server.close if server && !server.closed?
   end
 
+  def test_connector_probe_detects_refused_connection_without_selector_event
+    port = free_tcp_port
+    begin
+      client = EventLoopCompat::TCPSocket.connect("127.0.0.1", port)
+    rescue Errno::ECONNREFUSED
+      return
+    end
+    failed = false
+    client.on_connect_failed { failed = true }
+    client.attach(@loop)
+
+    socket = client.to_io
+    _, writable, exceptional = IO.select(nil, [socket], [socket], 1)
+    assert_true((writable && !writable.empty?) || (exceptional && !exceptional.empty?),
+                "refused socket should become writable or exceptional")
+
+    connector = client.instance_variable_get(:@connector)
+    connector.__send__(:probe_connect, nil)
+    assert_true(failed, "poll fallback must dispatch on_connect_failed")
+  ensure
+    socket.close if socket && !socket.closed?
+  end
+
   def test_connector_reports_failed_connect_on_priority_event
     failed = false
     owner = Object.new
     owner.define_singleton_method(:on_connect_failed) { failed = true }
     ruby_socket = Object.new
-    ruby_socket.define_singleton_method(:getsockopt) { |*_args| [Errno::ECONNREFUSED::Errno].pack('i') }
+    # The exception set alone identifies a failed Winsock connect; a
+    # previous SO_ERROR query may already have cleared the error code.
+    ruby_socket.define_singleton_method(:getsockopt) { |*_args| [0].pack('i') }
     connector = EventLoopCompat::Socket::Connector.new(owner, ruby_socket)
     connector.attach(@loop)
 

@@ -28,6 +28,57 @@ module EventLoopCompat
 
   DEFAULT_BACKLOG = 1024
 
+  # On Windows, io-event's Select selector can leave a failed nonblocking
+  # connect waiting without dispatching either writable or priority. Probe
+  # that socket separately as a fallback, on the loop thread, until one of
+  # Winsock's connect completion sets becomes ready. The ordinary selector
+  # path remains the fast path and detaching the connector cancels the probe.
+  module ConnectorProbe
+    PROBE_INTERVAL = 0.05
+
+    def __start_runtime__(loop)
+      super
+      schedule_connect_probe(loop) if WINDOWS && !@connect_probe
+    end
+
+    def __stop_runtime__(loop)
+      cancel_connect_probe
+      super
+    end
+
+    def __run_finished__
+      cancel_connect_probe
+      super
+    end
+
+    private
+
+    def schedule_connect_probe(loop)
+      @connect_probe = loop.timers.schedule(loop.timers.now + PROBE_INTERVAL, method(:probe_connect))
+    end
+
+    def cancel_connect_probe
+      @connect_probe&.cancel!
+      @connect_probe = nil
+    end
+
+    def probe_connect(_now)
+      @connect_probe = nil
+      return unless attached? && enabled?
+
+      _, writable, exceptional = ::IO.select(nil, [@ruby_socket], [@ruby_socket], 0)
+      if exceptional && !exceptional.empty?
+        on_priority
+      elsif writable && !writable.empty?
+        on_writable
+      else
+        schedule_connect_probe(evloop)
+      end
+    rescue IOError, SystemCallError => e
+      evloop.__error__(self, e) if evloop
+    end
+  end
+
   class Socket < BufferedIO
     # Returns a half-open socket object. The connect completes when the
     # object is attached to a running loop.
@@ -118,6 +169,8 @@ module EventLoopCompat
     alias on_resolve_failed on_connect_failed
 
     class Connector < IOWatcher
+      include ConnectorProbe
+
       def initialize(socket, ruby_socket)
         @socket, @ruby_socket = socket, ruby_socket
         super(ruby_socket, :w)
@@ -139,12 +192,21 @@ module EventLoopCompat
           end
           @socket.__send__(:on_connect)
         else
-          @socket.instance_eval { @failed = true }
-          @socket.__send__(:on_connect_failed)
+          fail_connection
         end
       end
 
+      def on_priority
+        detach
+        fail_connection
+      end
+
       private
+
+      def fail_connection
+        @socket.instance_eval { @failed = true }
+        @socket.__send__(:on_connect_failed)
+      end
 
       def connect_successful?
         @ruby_socket.getsockopt(::Socket::SOL_SOCKET, ::Socket::SO_ERROR).unpack('i').first == 0

@@ -444,6 +444,8 @@ module Coolio
     alias_method :on_resolve_failed, :on_connect_failed
 
     class Connector < IOWatcher
+      include EventLoopCompat::ConnectorProbe
+
       def initialize(coolio_socket, ruby_socket)
         @coolio_socket, @ruby_socket = coolio_socket, ruby_socket
         super(ruby_socket, 'w')
@@ -467,12 +469,21 @@ module Coolio
 
           @coolio_socket.__send__(:on_connect)
         else
-          @coolio_socket.instance_eval { @_failed = true }
-          @coolio_socket.__send__(:on_connect_failed)
+          fail_connection
         end
       end
 
+      def on_priority
+        detach
+        fail_connection
+      end
+
       private
+
+      def fail_connection
+        @coolio_socket.instance_eval { @_failed = true }
+        @coolio_socket.__send__(:on_connect_failed)
+      end
 
       def connect_successful?
         @ruby_socket.getsockopt(::Socket::SOL_SOCKET, ::Socket::SO_ERROR).unpack('i').first == 0
