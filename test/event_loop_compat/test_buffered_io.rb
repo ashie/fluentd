@@ -231,4 +231,49 @@ class EventLoopCompatBufferedIOTest < Test::Unit::TestCase
     sock1.close rescue nil
     sock2.close rescue nil
   end
+
+  def test_small_writes_are_sent_together
+    writes = []
+    io = Object.new
+    io.define_singleton_method(:closed?) { false }
+    io.define_singleton_method(:write_nonblock) do |data|
+      writes << data
+      data.bytesize
+    end
+    bio = RecordingIO.new(io)
+    header = "Content-Length: 2\r\n\r\n".freeze
+    body = "\xFF\xFE".b
+
+    bio.write(header)
+    bio.write(body)
+    bio.send(:flush_write_buffer)
+
+    assert_equal([header.b + body], writes)
+    assert_equal(0, bio.instance_variable_get(:@write_buffer_size))
+  end
+
+  def test_coalesced_writes_preserve_remaining_data_when_write_would_block
+    writes = []
+    io = Object.new
+    io.define_singleton_method(:closed?) { false }
+    io.define_singleton_method(:write_nonblock) do |data|
+      writes << data
+      case writes.size
+      when 1 then 3
+      when 2 then raise IO::EAGAINWaitWritable
+      else data.bytesize
+      end
+    end
+    bio = RecordingIO.new(io)
+    bio.write("header")
+    bio.write("body")
+
+    assert_raise(IO::EAGAINWaitWritable) { bio.send(:flush_write_buffer) }
+    assert_equal(7, bio.instance_variable_get(:@write_buffer_size))
+    bio.send(:flush_write_buffer)
+
+    assert_equal(["headerbody", "derbody", "derbody"], writes)
+    assert_equal(0, bio.instance_variable_get(:@write_buffer_size))
+    assert_empty(bio.instance_variable_get(:@write_buffer))
+  end
 end

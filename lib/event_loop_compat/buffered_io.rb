@@ -137,7 +137,14 @@ module EventLoopCompat
     def write(data)
       data = data.to_s
       unless data.empty?
-        @write_buffer << data
+        # Coolio::Buffer packs small writes into 16 KiB nodes. In particular,
+        # send HTTP headers and body together: separate TCP writes followed by
+        # an SO_LINGER=0 close can discard the body before it reaches the peer.
+        if @write_buffer.last && @write_buffer.last.bytesize + data.bytesize <= INPUT_SIZE
+          @write_buffer[-1] = @write_buffer.last.b + data.b
+        else
+          @write_buffer << data
+        end
         @write_buffer_size += data.bytesize
         schedule_write
       end
