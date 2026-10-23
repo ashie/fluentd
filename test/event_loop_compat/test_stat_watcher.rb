@@ -184,7 +184,7 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
     skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
     skip "requires /proc/self/fd" unless File.directory?("/proc/self/fd")
 
-    paths = 3.times.map { |i| File.join(@dir, "shared#{i}.txt") }
+    paths = Array.new(3) { |i| File.join(@dir, "shared#{i}.txt") }
     paths.each { |p| File.write(p, "one") }
     baseline = inotify_fd_count
     changes = []

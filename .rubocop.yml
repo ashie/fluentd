@@ -63,6 +63,7 @@ Performance/StringIdentifierArgument:
     - test/counter/test_server.rb
     - test/plugin/test_out_forward.rb
     - lib/fluent/plugin/out_forward.rb
+    - test/event_loop_compat/test_loop.rb
   Enabled: true
 
 Performance/StringInclude:
