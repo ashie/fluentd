@@ -155,28 +155,28 @@ class EventLoopCompatTest < Test::Unit::TestCase
   end
 
   def test_disable_and_enable_timer
-    times = []
-    tw = EventLoopCompat::TimerWatcher.new(0.05, true) { times << monotonic }
+    firings = []
+    phase = :before_disable
+    tw = EventLoopCompat::TimerWatcher.new(0.01, true) do
+      firings << phase
+      if phase == :before_disable && firings.count(:before_disable) == 2
+        phase = :disabled
+        @loop.disable(tw)
+        EventLoopCompat::TimerWatcher.new(0.05) do
+          phase = :after_enable
+          @loop.enable(tw)
+        end.attach(@loop)
+      elsif phase == :after_enable && firings.count(:after_enable) == 2
+        @loop.stop
+      end
+    end
     tw.attach(@loop)
 
-    start = nil
-    disabler = Thread.new do
-      sleep 0.15
-      @loop.disable(tw)
-    end
-    enabler = Thread.new do
-      sleep 0.35
-      @loop.enable(tw)
-    end
-    start = monotonic
-    run_with_watchdog(@loop, 0.6)
-    disabler.join
-    enabler.join
+    run_with_watchdog(@loop, 1.0)
 
-    rel = times.map { |t| t - start }
-    assert_true(rel.any? { |t| t < 0.15 }, "expected firings before disable")
-    assert_true(rel.none? { |t| t > 0.22 && t < 0.35 }, "no firings while disabled: #{rel.inspect}")
-    assert_true(rel.any? { |t| t > 0.40 }, "expected firings after re-enable")
+    assert_equal(2, firings.count(:before_disable), "expected firings before disable: #{firings.inspect}")
+    assert_equal(0, firings.count(:disabled), "timer fired while disabled: #{firings.inspect}")
+    assert_equal(2, firings.count(:after_enable), "expected firings after re-enable: #{firings.inspect}")
   end
 
   #
