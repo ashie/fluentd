@@ -121,6 +121,7 @@ module EventLoopCompat
       def initialize(socket, ruby_socket)
         @socket, @ruby_socket = socket, ruby_socket
         super(ruby_socket, :w)
+        @events_mask |= IO::PRIORITY if WINDOWS
       end
 
       def on_writable

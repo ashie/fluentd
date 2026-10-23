@@ -28,6 +28,16 @@ class EINTROnceWriter
   end
 end
 
+class FullPipeWriter
+  class WouldBlock < IOError
+    include IO::WaitWritable
+  end
+
+  def write_nonblock(_string)
+    raise WouldBlock
+  end
+end
+
 class EventLoopCompatTest < Test::Unit::TestCase
   WATCHDOG_SECONDS = 1.5
 
@@ -355,6 +365,11 @@ class EventLoopCompatTest < Test::Unit::TestCase
   ensure
     reader.close rescue nil
     writer.close rescue nil
+  end
+
+  def test_notify_treats_wait_writable_as_an_existing_notification
+    @loop.instance_variable_set(:@notify_writer, FullPipeWriter.new)
+    assert_nothing_raised { @loop.send(:notify) }
   end
 
   def test_run_returns_when_all_watchers_detached

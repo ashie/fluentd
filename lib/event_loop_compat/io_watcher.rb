@@ -109,7 +109,10 @@ module EventLoopCompat
                   @loop.__error__(self, e) if @loop
                 end
               end
-              if (events & IO::WRITABLE) != 0
+              # Winsock reports a failed nonblocking connect in the
+              # exception set (IO::PRIORITY), not the writable set.
+              # Connectors request that event and handle it via on_writable.
+              if (events & (IO::WRITABLE | IO::PRIORITY)) != 0
                 begin
                   on_writable
                 rescue => e

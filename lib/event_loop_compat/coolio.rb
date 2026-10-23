@@ -447,6 +447,7 @@ module Coolio
       def initialize(coolio_socket, ruby_socket)
         @coolio_socket, @ruby_socket = coolio_socket, ruby_socket
         super(ruby_socket, 'w')
+        @events_mask |= ::IO::PRIORITY if EventLoopCompat::WINDOWS
       end
 
       def on_writable

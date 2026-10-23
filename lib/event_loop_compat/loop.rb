@@ -375,7 +375,7 @@ module EventLoopCompat
       return unless writer
       begin
         writer.write_nonblock(".")
-      rescue Errno::EAGAIN
+      rescue IO::WaitWritable
         # pipe is full: unread bytes are already pending
       rescue Errno::EINTR
         retry

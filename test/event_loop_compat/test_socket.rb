@@ -151,6 +151,42 @@ class EventLoopCompatSocketTest < Test::Unit::TestCase
     assert_equal([], @errors.map { |e| e.class.name })
   end
 
+  def test_connector_watches_for_winsock_connect_failures
+    server = TCPServer.new("127.0.0.1", 0)
+    client = EventLoopCompat::TCPSocket.connect("127.0.0.1", server.addr[1])
+    connector = client.instance_variable_get(:@connector)
+    expected = IO::WRITABLE
+    expected |= IO::PRIORITY if EventLoopCompat::WINDOWS
+    assert_equal(expected, connector.instance_variable_get(:@events_mask))
+  ensure
+    client.to_io.close if client && !client.to_io.closed?
+    server.close if server && !server.closed?
+  end
+
+  def test_connector_reports_failed_connect_on_priority_event
+    failed = false
+    owner = Object.new
+    owner.define_singleton_method(:on_connect_failed) { failed = true }
+    ruby_socket = Object.new
+    ruby_socket.define_singleton_method(:getsockopt) { |*_args| [Errno::ECONNREFUSED::Errno].pack('i') }
+    connector = EventLoopCompat::Socket::Connector.new(owner, ruby_socket)
+    connector.attach(@loop)
+
+    loop_fiber = Fiber.current
+    waiting = nil
+    selector = Object.new
+    selector.define_singleton_method(:io_wait) do |fiber, _io, _events|
+      waiting = fiber
+      loop_fiber.transfer
+    end
+    @loop.instance_variable_set(:@selector, selector)
+    connector.__start_runtime__(@loop)
+    waiting.transfer(IO::PRIORITY)
+
+    assert_true(failed)
+    assert_false(connector.attached?)
+  end
+
   def test_resolve_failure_fires_on_resolve_failed_on_attach
     client = EventLoopCompat::TCPSocket.connect("no-such-host.invalid", 1234)
     resolved = false
