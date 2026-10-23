@@ -4973,6 +4973,22 @@ class TailInputTest < Test::Unit::TestCase
       assert_equal(lines + 1, d.events.size)
     end
 
+    def wait_for_rotated_watcher_to_drain(driver, watcher, rotated_path, timeout)
+      waiting(timeout) { sleep 0.1 until driver.instance.instance_variable_get(:@tails_rotate_wait).empty? }
+    rescue Timeout::Error
+      rotation = driver.instance.instance_variable_get(:@tails_rotate_wait)[watcher]
+      timer = rotation && rotation[:timer]
+      group = watcher.group_watcher
+      counter = group && group.current_paths[watcher.path]
+      flunk("rotated watcher did not drain: events=#{driver.events.size}, " \
+            "position=#{watcher.pe.read_pos}/#{File.size(rotated_path)}, " \
+            "eof=#{watcher.eof?}, pending=#{watcher.pending?}, " \
+            "timer_attached=#{timer&.attached?}, timer_enabled=#{timer&.enabled?}, " \
+            "timer_deadline=#{timer&.instance_variable_get(:@deadline)}, " \
+            "group_lines=#{counter&.number_lines_read}, " \
+            "group_since=#{counter&.start_reading_time}")
+    end
+
     test "a rotated file keeps being read under a group limit without the watch timer" do
       omit "need file change notifications" unless file_change_notifications?
       pattern = "/^#{@tmp_dir}\/(?<file>.+)\.log.*$/"
@@ -5007,7 +5023,7 @@ class TailInputTest < Test::Unit::TestCase
         FileUtils.move("#{@tmp_dir}/tail.log", "#{@tmp_dir}/tail.log.1")
         waiting(5) { sleep 0.1 until d.instance.instance_variable_get(:@tails_rotate_wait).size == 1 }
 
-        waiting(15) { sleep 0.1 until d.instance.instance_variable_get(:@tails_rotate_wait).empty? }
+        wait_for_rotated_watcher_to_drain(d, tw, "#{@tmp_dir}/tail.log.1", 15)
       end
       assert_equal(lines, d.events.size)
     end
@@ -5057,7 +5073,7 @@ class TailInputTest < Test::Unit::TestCase
 
         FileUtils.move("#{@tmp_dir}/tail.log", "#{@tmp_dir}/tail.log.1")
         waiting(5) { sleep 0.1 until d.instance.instance_variable_get(:@tails_rotate_wait).size == 1 }
-        waiting(20) { sleep 0.1 until d.instance.instance_variable_get(:@tails_rotate_wait).empty? }
+        wait_for_rotated_watcher_to_drain(d, tw, "#{@tmp_dir}/tail.log.1", 20)
       end
       assert_true(raised)
       assert_equal([], d.logs.grep(/Stopping the timer/))
