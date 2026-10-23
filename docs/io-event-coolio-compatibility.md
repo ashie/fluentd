@@ -267,16 +267,17 @@ synchronously.
 
 ### The attributes of a removed or missing path
 
-Both report exactly one change when the watched file is removed, but the
-attributes differ: cool.io reports the attributes the file had before the
-removal (its inotify fast path does not re-stat the path), the compatibility
-layer reports the attributes of a missing path, which are all zero. For a path
+Both report exactly one change when the watched file is removed. On Linux and
+macOS the attributes differ: cool.io reports the attributes the file had before
+the removal, while the compatibility layer reports the attributes of a missing
+path, which are all zero. On Windows, the comparison probe observes zeroed
+attributes from both implementations. For a path
 that does not exist when the watcher is attached, the `prev` struct that cool.io
 passes contains uninitialized memory.
 
 - Why it is kept: the zeroed attributes are the documented libev polling
   semantics and are the same on every platform; Windows has no inotify, so the
-  cool.io values there are already different from Linux. Reproducing the
+  cool.io values there already match the compatibility layer. Reproducing the
   cool.io values would mean reproducing uninitialized memory.
 - Effect on plugins: a plugin that classifies the event from `prev` and `cur`
   (for example "was the file deleted?") reads different fields. `in_tail` uses

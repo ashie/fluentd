@@ -22,11 +22,6 @@ class EventLoopCompatCoolioCompatibilityTest < Test::Unit::TestCase
     # compatibility layer resolves it synchronously.
     "class TCPSocket" => '"superclass=Coolio::Socket ancestors=Coolio::TCPSocket,Coolio::Socket,Coolio::IO constants=Connector,INPUT_SIZE,PEERADDR_FAILED,TCPConnectSocket,Watcher"',
 
-    # cool.io reports the attributes of the file it had before the
-    # removal; the compatibility layer reports the attributes of a
-    # missing path, which are all zero.
-    "stat removed file" => '"[[0, true]]"',
-
     # cool.io leaves a one-shot timer enabled after it fires, which
     # makes Loop#run block forever; the compatibility layer disables it.
     "timer one-shot disabled after firing" => 'true',
@@ -53,6 +48,12 @@ class EventLoopCompatCoolioCompatibilityTest < Test::Unit::TestCase
     # cool.io's AsyncWatcher is an IOWatcher on an anonymous pipe, and
     # libev on Windows does not report readability for that pipe.
     "async on_signal" => '1',
+  }.freeze
+
+  NON_WINDOWS_DIVERGENCES = {
+    # cool.io reports the previous file attributes on Linux and macOS;
+    # on Windows both implementations report a missing path.
+    "stat removed file" => '"[[0, true]]"',
   }.freeze
 
   def test_coolio_namespace_matches_real_cool_io
@@ -84,7 +85,7 @@ class EventLoopCompatCoolioCompatibilityTest < Test::Unit::TestCase
     if windows?
       KNOWN_DIVERGENCES.merge(WINDOWS_DIVERGENCES)
     else
-      KNOWN_DIVERGENCES
+      KNOWN_DIVERGENCES.merge(NON_WINDOWS_DIVERGENCES)
     end
   end
 

@@ -142,11 +142,22 @@ class EventLoopCompatSocketTest < Test::Unit::TestCase
       return
     end
     failed = false
+    connected = false
+    client.on_connect { connected = true; @loop.stop }
     client.on_connect_failed { failed = true; @loop.stop }
     client.attach(@loop)
     run_with_watchdog(@loop)
 
-    assert_true(failed, "on_connect_failed must fire for a refused connection")
+    unless failed
+      so_error = begin
+        client.to_io.getsockopt(::Socket::SOL_SOCKET, ::Socket::SO_ERROR).int
+      rescue => e
+        "#{e.class}: #{e.message}"
+      end
+      flunk("on_connect_failed must fire for a refused connection; " \
+            "connected=#{connected}, attached=#{client.attached?}, " \
+            "so_error=#{so_error}, errors=#{@errors.map { |e| [e.class.name, e.message] }.inspect}")
+    end
     assert_raise(RuntimeError) { client.attach(@loop) }
     assert_equal([], @errors.map { |e| e.class.name })
   end
