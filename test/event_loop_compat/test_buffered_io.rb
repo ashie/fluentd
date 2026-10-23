@@ -167,6 +167,36 @@ class EventLoopCompatBufferedIOTest < Test::Unit::TestCase
     sock1.close rescue nil
   end
 
+  def test_close_after_write_waits_for_both_watchers_to_exit
+    sock1, sock2 = UNIXSocket.pair
+    bio = Class.new(RecordingIO) do
+      def on_write_complete
+        super
+        close
+      end
+    end.new(sock1)
+    closed_while_fibers_alive = nil
+    sock1.define_singleton_method(:close) do
+      closed_while_fibers_alive = [bio.instance_variable_get(:@read_watcher).fiber_alive?,
+                                  bio.instance_variable_get(:@write_watcher).fiber_alive?]
+      super()
+    end
+
+    bio.attach(@loop)
+    bio.write("done")
+    run_with_watchdog(@loop)
+
+    assert_equal([false, false], closed_while_fibers_alive)
+    assert_equal(0, bio.instance_variable_get(:@write_buffer_size))
+    assert_true(bio.write_completed)
+    assert_equal("done", sock2.read_nonblock(4))
+    assert_true(sock1.closed?)
+    assert_equal([], @errors.map { |e| e.class.name })
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
   def test_large_write_is_flushed_in_chunks
     payload = "x" * (256 * 1024)
     sock1, sock2 = UNIXSocket.pair

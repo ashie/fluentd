@@ -152,9 +152,13 @@ module EventLoopCompat
         if loop && loop.running? && (@read_watcher.fiber_alive? || @write_watcher.fiber_alive?)
           # A fiber may still be registered on the shared io in the
           # selector; closing the fd now would race with the selector.
-          # The watchers' fibers close it once they have exited.
-          @read_watcher.request_close
-          @write_watcher.request_close
+          # Both fibers use the same socket. The first fiber to exit
+          # must not close it while the other is still in the selector.
+          close_when_idle = proc {
+            @_io.close unless @_io.closed? || @read_watcher.fiber_alive? || @write_watcher.fiber_alive?
+          }
+          @read_watcher.request_close(&close_when_idle)
+          @write_watcher.request_close(&close_when_idle)
         else
           begin
             @_io.close unless @_io.closed?

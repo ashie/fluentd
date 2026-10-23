@@ -78,8 +78,9 @@ module EventLoopCompat
 
     # Used by BufferedIO#close: the shared io is closed once all fibers
     # that could be registered on it have exited.
-    def request_close
+    def request_close(&block)
       @close_requested = true
+      @close_callback = block
     end
 
     def fiber_alive?
@@ -134,7 +135,7 @@ module EventLoopCompat
         ensure
           @fiber = nil
           close_park
-          close_io if @close_requested
+          finish_close_request
         end
       end
       @fiber.transfer
@@ -158,17 +159,26 @@ module EventLoopCompat
     def __discard_runtime__
       @fiber = nil
       close_park
-      close_io if @close_requested
+      finish_close_request
     end
 
     def __run_finished__
       # The selector is closed: every fiber of this run is dead.
       @fiber = nil
       close_park
-      close_io if @close_requested
+      finish_close_request
     end
 
     private
+
+    def finish_close_request
+      return unless @close_requested
+      if @close_callback
+        @close_callback.call
+      else
+        close_io
+      end
+    end
 
     def close_io
       @io.close unless @io.closed?
