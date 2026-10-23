@@ -13,10 +13,6 @@ require 'rbconfig'
 class EventLoopCompatCoolioCompatibilityTest < Test::Unit::TestCase
   # observation key => value reported for the compatibility namespace
   KNOWN_DIVERGENCES = {
-    # Re-attaching an attached watcher raises a confusing ArgumentError
-    # in cool.io; the compatibility layer simply re-attaches.
-    "Watcher#attach running loop" => '"no error"',
-
     # libev backend and flag constants of the C extension. The
     # compatibility loop has no libev backend to select.
     "class Loop" => '"superclass=Object ancestors=Coolio::Loop constants="',
@@ -43,6 +39,13 @@ class EventLoopCompatCoolioCompatibilityTest < Test::Unit::TestCase
     "timer one-shot still attached" => 'true',
   }.freeze
 
+  # The cool.io extension raises on a second attach with Ruby 3.3, but
+  # Ruby 4.0 CI observes no error. Accept either real-gem result while
+  # keeping the compatibility namespace's behavior fixed.
+  VERSION_DEPENDENT_DIFFERENCES = {
+    "Watcher#attach running loop" => '"no error"',
+  }.freeze
+
   # Observations where the real cool.io extension is platform-specific.
   # The compatibility layer keeps the feature working where libev does
   # not support it, so the difference is pinned per platform.
@@ -59,8 +62,14 @@ class EventLoopCompatCoolioCompatibilityTest < Test::Unit::TestCase
 
     assert_equal(real.keys, compat.keys, "the two probes reported different observations")
 
-    (real.keys - known.keys).each do |key|
+    (real.keys - known.keys - VERSION_DEPENDENT_DIFFERENCES.keys).each do |key|
       assert_equal(real[key], compat[key], "cool.io compatibility mismatch: #{key}")
+    end
+
+    VERSION_DEPENDENT_DIFFERENCES.each do |key, expected|
+      assert_equal(expected, compat[key], "undocumented change in the compatibility behaviour: #{key}")
+      assert_match(/\A"(?:no error|ArgumentError: wrong number of arguments.*)"\z/, real[key],
+                   "unexpected cool.io behavior: #{key}")
     end
 
     known.each do |key, expected|

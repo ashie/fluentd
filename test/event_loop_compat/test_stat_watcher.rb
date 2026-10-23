@@ -135,7 +135,7 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
   # The inotify fast path (Linux) must detect changes immediately, far
   # before the polling interval would fire.
   def test_inotify_fast_path_detects_change_immediately
-    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
+    omit "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
 
     write_file("one")
     changes = []
@@ -155,7 +155,7 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
   # Replacement of the watched file by a rename (what in_tail rotation
   # looks like) must be detected through the parent directory watch.
   def test_inotify_fast_path_detects_rename_replacement
-    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
+    omit "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
 
     write_file("one")
     changes = []
@@ -181,8 +181,8 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
   # with the number of watched files, and in_tail with many files would
   # hit the fd limit and silently fall back to slow polling.
   def test_inotify_instance_is_shared_across_watchers
-    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
-    skip "requires /proc/self/fd" unless File.directory?("/proc/self/fd")
+    omit "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
+    omit "requires /proc/self/fd" unless File.directory?("/proc/self/fd")
 
     paths = Array.new(3) { |i| File.join(@dir, "shared#{i}.txt") }
     paths.each { |p| File.write(p, "one") }
@@ -216,7 +216,7 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
   # IN_ONLYDIR value made inotify_add_watch fail with EINVAL, leaving
   # only the polling fallback).
   def test_inotify_fast_path_detects_appearance_of_missing_file
-    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
+    omit "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
 
     changes = []
     sw = EventLoopCompat::StatWatcher.new(path, 30.0) { |prev, cur| changes << [prev, cur] }
@@ -238,8 +238,8 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
   # must close itself: no inotify fd and no loop watcher may be left
   # behind while the loop keeps running.
   def test_inotify_instance_is_closed_when_kernel_drops_last_watch
-    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
-    skip "requires /proc/self/fd" unless File.directory?("/proc/self/fd")
+    omit "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
+    omit "requires /proc/self/fd" unless File.directory?("/proc/self/fd")
 
     write_file("one")
     baseline = inotify_fd_count
@@ -269,8 +269,8 @@ class EventLoopCompatStatWatcherTest < Test::Unit::TestCase
   # in the selector (io-event raises on that): the fd close must be
   # deferred to the fiber exit, as IOWatcher#close intends.
   def test_last_watch_removed_from_a_callback_closes_fd_safely
-    skip "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
-    skip "requires /proc/self/fd" unless File.directory?("/proc/self/fd")
+    omit "inotify fast path is not supported on this platform" unless EventLoopCompat::Inotify.supported?
+    omit "requires /proc/self/fd" unless File.directory?("/proc/self/fd")
 
     write_file("one")
     baseline = inotify_fd_count

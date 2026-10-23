@@ -223,13 +223,15 @@ plugin can do instead are written down.
 
 ### Re-attaching an attached watcher
 
-`Coolio::Watcher#attach` re-attaches an attached watcher. cool.io raises
-`ArgumentError: wrong number of arguments (given 0, expected 1)`.
+`Coolio::Watcher#attach` re-attaches an attached watcher. With Ruby 3.3,
+cool.io raises `ArgumentError: wrong number of arguments (given 0, expected 1)`;
+with Ruby 4.0, the CI probe observes no error. This difference is therefore
+Ruby-version-dependent.
 
 - Why it is kept: that error is an accident of how the C extension calls the
   loop's `attach` a second time, not a documented contract, and there is no
   second `attach` implementation to reproduce it with.
-- Effect on plugins: attaching twice works here and raises with cool.io. The
+- Effect on plugins: attaching twice works here, while cool.io may raise. The
   tested plugin scenarios do not rely on that exception.
 - Instead: ask `attached?` before attaching, as plugins already have to do to
   avoid the exception.
