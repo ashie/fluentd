@@ -121,9 +121,9 @@ Known issues with moving the layer into cool.io:
 - Ownership by cool.io would not remove the observable differences listed
   below (for example one-shot timers, stat attributes and synchronous DNS).
   Their compatibility policy, load-order tests, and cross-platform behavior
-  would have to be maintained in cool.io. The current PoC has not been tested
-  on a Windows host, and its full suite has not completed after the latest
-  integration changes.
+  would have to be maintained in cool.io. GitHub Actions now exercises this
+  PoC on Windows as well as Linux and macOS, but a passing cross-platform
+  full-suite result has not yet been established.
 
 A practical first step would keep the existing libev build and default backend
 while moving selection and the compatibility tests into cool.io. Whether to
@@ -208,11 +208,15 @@ what external plugins do. `test/compat/test_socket_util.rb` exercises the
 legacy socket API through the same public namespace.
 
 These probes cover representative API contracts, not every behavior of the C
-extension or every external plugin. After the latest core-diff reduction, the
-focused compatibility and integration tests passed on both backends. A compat
+extension or every external plugin. The focused compatibility and integration
+tests pass on both backends locally. GitHub Actions runs the full suite on
+Linux, macOS and Windows, but its current workflow does not set
+`FLUENTD_EVENT_LOOP_BACKEND`, so those runs cover the default backend plus the
+standalone compatibility tests, not a compat-backend full suite. A local compat
 full-suite run was stopped by a 10-minute limit after 3,201 tests with no
 failures or errors at that point; this is not a completed full-suite result.
-Windows has not been tested on a Windows host.
+The cross-platform CI failures found so far are being addressed separately;
+there is not yet a passing full-suite result for this PoC.
 
 ## Differences from cool.io
 
