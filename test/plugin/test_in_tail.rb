@@ -3248,7 +3248,6 @@ class TailInputTest < Test::Unit::TestCase
     end
 
     def test_should_create_new_watcher_for_new_file_with_same_name
-      now = Time.now
       config = common_follow_inode_config + config_element('', '', {"limit_recently_modified" => "2s"})
 
       d = create_driver(config, false)
@@ -3257,7 +3256,6 @@ class TailInputTest < Test::Unit::TestCase
         f.puts "test1"
         f.puts "test2"
       }
-      path_ino = create_target_info("#{@tmp_dir}/tail.txt")
 
       d.run(expect_emits: 1, shutdown: false) do
         Fluent::FileWrapper.open("#{@tmp_dir}/tail.txt", "ab") {|f| f.puts "test3\n"}
@@ -3270,12 +3268,9 @@ class TailInputTest < Test::Unit::TestCase
       }
       new_path_ino = create_target_info("#{@tmp_dir}/tail.txt")
 
-      Timecop.travel(now + 10) do
-        sleep 3
-        d.instance.instance_eval do
-          @tails[path_ino.path] == nil
-          @tails[new_path_ino.path] != nil
-        end
+      waiting(10, plugin: d.instance) do
+        sleep 0.05 until d.instance.instance_variable_get(:@tails)[new_path_ino.path]&.ino == new_path_ino.ino &&
+                         d.events.length >= 5
       end
 
       events = d.events
