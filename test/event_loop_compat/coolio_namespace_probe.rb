@@ -96,6 +96,7 @@ loop = Coolio::Loop.new
 reader, writer = ::IO.pipe
 data = nil
 io_watcher = Coolio::IOWatcher.new(reader, 'r')
+check(!io_watcher.respond_to?(:loop), "Coolio::IOWatcher must not expose a public loop accessor")
 io_watcher.on_readable { data = reader.read_nonblock(1) }
 io_watcher.attach(loop)
 writer.write "x"

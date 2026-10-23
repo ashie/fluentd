@@ -204,6 +204,12 @@ module Coolio
   class Watcher < EventLoopCompat::Watcher
     include EventLoopCompat::CoolioWatcherBehavior
 
+    # Real Coolio exposes evloop, not a public loop accessor. Preserve
+    # Kernel#loop for watcher subclasses that use `loop do ... end`.
+    private def loop(&block)
+      Kernel.loop(&block)
+    end
+
     def initialize
       raise "watcher base class should not be initialized directly" if self.class == Coolio::Watcher
       super
