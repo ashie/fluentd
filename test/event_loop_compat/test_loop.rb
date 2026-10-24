@@ -1,0 +1,567 @@
+#
+# Tests for the EventLoopCompat PoC layer (io-event based).
+#
+# Run: bundle exec ruby -Ilib -Itest test/event_loop_compat/test_loop.rb
+#
+# These tests are intentionally standalone: they do not use Fluentd's
+# test helpers because the PoC is independent from Fluentd itself.
+#
+
+require 'test/unit'
+require 'socket'
+
+require 'event_loop_compat'
+
+# Raises EINTR on the first write_nonblock, then delegates.
+class EINTROnceWriter
+  def initialize(io)
+    @io = io
+    @raised = false
+  end
+
+  def write_nonblock(string, exception: true)
+    unless @raised
+      @raised = true
+      raise Errno::EINTR
+    end
+    @io.write_nonblock(string, exception: exception)
+  end
+end
+
+class FullPipeWriter
+  class WouldBlock < IOError
+    include IO::WaitWritable
+  end
+
+  def write_nonblock(_string)
+    raise WouldBlock
+  end
+end
+
+class EventLoopCompatTest < Test::Unit::TestCase
+  WATCHDOG_SECONDS = 1.5
+
+  def setup
+    @errors = []
+    @loop = EventLoopCompat::Loop.new(error_handler: ->(watcher, error) {
+      @errors << error
+    })
+  end
+
+  # Run the loop until the watchdog timer stops it.
+  def run_with_watchdog(loop, seconds = 0.5)
+    wd = EventLoopCompat::TimerWatcher.new(seconds) { loop.stop }
+    wd.attach(loop)
+    loop.run
+  end
+
+  # Run the loop in a thread and report whether it finished by itself.
+  def run_in_thread(loop, timeout = 3)
+    th = Thread.new do
+      begin
+        loop.run
+      rescue => e
+        e
+      end
+    end
+    finished = !th.join(timeout).nil?
+    [finished, finished ? th.value : nil]
+  end
+
+  def monotonic
+    Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  end
+
+  #
+  # timers
+  #
+
+  def test_repeat_timer_fires_multiple_times
+    fired = 0
+    tw = EventLoopCompat::TimerWatcher.new(0.05, true) { fired += 1 }
+    tw.attach(@loop)
+    run_with_watchdog(@loop)
+    assert_operator(fired, :>=, 4, "repeat timer should fire repeatedly")
+    assert_equal([], @errors.map { |e| e.class.name })
+  end
+
+  def test_oneshot_timer_fires_only_once
+    fired = 0
+    tw = EventLoopCompat::TimerWatcher.new(0.05) { fired += 1 }
+    tw.attach(@loop)
+    # No watchdog: the loop must exit by itself when the one-shot timer
+    # is not re-armed and no other watcher is active.
+    finished, err = run_in_thread(@loop)
+    assert_true(finished, "loop did not exit after one-shot timer: #{err.inspect}")
+    assert_equal(1, fired)
+    assert_false(tw.enabled?, "one-shot timer should not stay enabled")
+    assert_true(tw.attached?, "one-shot timer should stay attached")
+  end
+
+  def test_repeat_timer_interval_is_monotonic
+    times = []
+    tw = EventLoopCompat::TimerWatcher.new(0.05, true) { times << monotonic }
+    tw.attach(@loop)
+    run_with_watchdog(@loop, 0.4)
+    assert_operator(times.size, :>=, 4)
+    diffs = times.each_cons(2).map { |a, b| b - a }
+    # libev-like fixed schedule: intervals around 0.05, never much less.
+    assert_operator(diffs.min, :>=, 0.03, "timer intervals must not be too short")
+    assert_operator(diffs.max, :<, 0.3, "timer intervals must not drift too much")
+  end
+
+  def test_detach_stops_timer_callback
+    fired = 0
+    tw = nil
+    tw = EventLoopCompat::TimerWatcher.new(0.05, true) do
+      fired += 1
+      tw.detach if fired == 1
+    end
+    tw.attach(@loop)
+    run_with_watchdog(@loop)
+    assert_equal(1, fired, "detached watcher must not fire again")
+    assert_false(tw.attached?)
+  end
+
+  def test_detach_from_another_thread
+    fired = 0
+    detached = false
+    tw = EventLoopCompat::TimerWatcher.new(0.05, true) do
+      fired += 1
+    end
+    tw.attach(@loop)
+    detacher = Thread.new do
+      sleep 0.15
+      tw.detach
+      detached = true
+    end
+    # keeper keeps the loop alive after the detach
+    keeper = EventLoopCompat::TimerWatcher.new(0.05, true) { }
+    keeper.attach(@loop)
+    run_with_watchdog(@loop)
+    detacher.join
+    assert_true(detached)
+    # With 0.05s interval and a 0.5s run, more than ~6 firings would
+    # mean the timer kept running after detach.
+    assert_operator(fired, :<=, 6, "timer kept firing after detach: #{fired}")
+  end
+
+  def test_double_detach_is_safe
+    tw = EventLoopCompat::TimerWatcher.new(0.05, true) { }
+    tw.attach(@loop)
+    tw.detach
+    tw.detach
+    assert_false(tw.attached?)
+  end
+
+  def test_disable_and_enable_timer
+    firings = []
+    phase = :before_disable
+    tw = EventLoopCompat::TimerWatcher.new(0.01, true) do
+      firings << phase
+      if phase == :before_disable && firings.count(:before_disable) == 2
+        phase = :disabled
+        @loop.disable(tw)
+        EventLoopCompat::TimerWatcher.new(0.05) do
+          phase = :after_enable
+          @loop.enable(tw)
+        end.attach(@loop)
+      elsif phase == :after_enable && firings.count(:after_enable) == 2
+        @loop.stop
+      end
+    end
+    tw.attach(@loop)
+
+    run_with_watchdog(@loop, 1.0)
+
+    assert_equal(2, firings.count(:before_disable), "expected firings before disable: #{firings.inspect}")
+    assert_equal(0, firings.count(:disabled), "timer fired while disabled: #{firings.inspect}")
+    assert_equal(2, firings.count(:after_enable), "expected firings after re-enable: #{firings.inspect}")
+  end
+
+  #
+  # IO watchers
+  #
+
+  def test_readable_event_on_socketpair
+    sock1, sock2 = UNIXSocket.pair
+    received = nil
+    w = EventLoopCompat::IOWatcher.new(sock1) do |watcher|
+      received = watcher.io.read_nonblock(100)
+      @loop.stop
+    end
+    w.attach(@loop)
+    sender = EventLoopCompat::TimerWatcher.new(0.05) { sock2.write("hello") }
+    sender.attach(@loop)
+    run_with_watchdog(@loop)
+    assert_equal("hello", received)
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  def test_readable_event_on_udp
+    udp = UDPSocket.new
+    udp.bind("127.0.0.1", 0)
+    port = udp.addr[1]
+    received = nil
+    w = EventLoopCompat::IOWatcher.new(udp) do |watcher|
+      data, _ = watcher.io.recvfrom(100)
+      received = data
+      @loop.stop
+    end
+    w.attach(@loop)
+    sender = EventLoopCompat::TimerWatcher.new(0.05) { udp.send("ping", 0, "127.0.0.1", port) }
+    sender.attach(@loop)
+    run_with_watchdog(@loop)
+    assert_equal("ping", received)
+  ensure
+    udp.close rescue nil
+  end
+
+  def test_detach_io_watcher_stops_callback
+    sock1, sock2 = UNIXSocket.pair
+    called = 0
+    w = EventLoopCompat::IOWatcher.new(sock1) { called += 1 }
+    w.attach(@loop)
+    first = EventLoopCompat::TimerWatcher.new(0.05) { w.detach }
+    first.attach(@loop)
+    # data arrives only after the watcher has been detached
+    sender = EventLoopCompat::TimerWatcher.new(0.2, true) { sock2.write("x") }
+    sender.attach(@loop)
+    run_with_watchdog(@loop)
+    assert_equal(0, called, "detached IO watcher must not fire")
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  def test_disable_and_enable_io_watcher
+    sock1, sock2 = UNIXSocket.pair
+    called = 0
+    w = EventLoopCompat::IOWatcher.new(sock1) { called += 1 }
+    w.attach(@loop)
+    sender = EventLoopCompat::TimerWatcher.new(0.05, true) { sock2.write("x") rescue nil }
+    sender.attach(@loop)
+
+    disabler = Thread.new { sleep 0.1; @loop.disable(w) }
+    enabler = Thread.new { sleep 0.3; @loop.enable(w) }
+    run_with_watchdog(@loop, 0.5)
+    disabler.join
+    enabler.join
+
+    assert_operator(called, :>=, 1, "IO watcher should fire before disable")
+    assert_equal([], @errors.map { |e| e.class.name })
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  def test_closed_io_does_not_break_loop
+    r, w = IO.pipe
+    r.close
+    called = 0
+    iw = EventLoopCompat::IOWatcher.new(r) { called += 1 }
+    iw.attach(@loop)
+    sender = EventLoopCompat::TimerWatcher.new(0.05, true) { w.write("x") rescue nil }
+    sender.attach(@loop)
+    run_with_watchdog(@loop, 0.3)
+    assert_equal(0, called, "callback must not run for a closed IO")
+  ensure
+    w.close rescue nil
+  end
+
+  def test_close_io_while_waiting
+    r, w = IO.pipe
+    iw = EventLoopCompat::IOWatcher.new(r) { }
+    iw.attach(@loop)
+    closer = EventLoopCompat::TimerWatcher.new(0.1) { r.close }
+    closer.attach(@loop)
+    run_with_watchdog(@loop, 0.3)
+    # The loop must finish normally regardless of the closed IO.
+    assert_equal([], @errors.reject { |e| e.is_a?(IO::WaitReadable) })
+  ensure
+    w.close rescue nil
+  end
+
+  def test_retries_enotsock_once_when_selecting
+    attempts = 0
+    selector = Object.new
+    selector.define_singleton_method(:select) do |timeout|
+      attempts += 1
+      raise Errno::ENOTSOCK if attempts == 1
+      timeout
+    end
+    @loop.instance_variable_set(:@selector, selector)
+
+    assert_equal(0, @loop.send(:select_with_closed_socket_retry, 1))
+    assert_equal(2, attempts)
+  end
+
+  def test_persistent_enotsock_is_not_swallowed
+    attempts = 0
+    selector = Object.new
+    selector.define_singleton_method(:select) do |_timeout|
+      attempts += 1
+      raise Errno::ENOTSOCK
+    end
+    @loop.instance_variable_set(:@selector, selector)
+
+    assert_raise(Errno::ENOTSOCK) { @loop.send(:select_with_closed_socket_retry, 1) }
+    assert_equal(2, attempts)
+  end
+
+  #
+  # loop control
+  #
+
+  def test_run_without_watchers_raises
+    assert_raise(RuntimeError) { @loop.run }
+  end
+
+  def test_stop_from_another_thread
+    tw = EventLoopCompat::TimerWatcher.new(0.05, true) { }
+    tw.attach(@loop)
+    stopper = Thread.new do
+      sleep 0.2
+      @loop.stop
+    end
+    start = monotonic
+    @loop.run
+    elapsed = monotonic - start
+    stopper.join
+    assert_operator(elapsed, :>=, 0.15, "loop must not spin without events")
+    assert_operator(elapsed, :<, 2.0, "loop must stop when requested")
+    assert_false(@loop.running?)
+    assert_false(@loop.stop, "second stop must be safe and return false")
+  end
+
+  # Regression: a stop request queued just before the loop enters
+  # select() with no timer or IO to wake it must still be observed.
+  def test_stop_just_before_blocking_is_observed
+    sock1, sock2 = UNIXSocket.pair
+    io = EventLoopCompat::IOWatcher.new(sock1) { sock1.read(1) }
+    io.attach(@loop)
+    stopper = Thread.new do
+      sleep 0.15
+      @loop.stop
+    end
+    started = monotonic
+    finished, err = run_in_thread(@loop)
+    stopper.join
+    elapsed = monotonic - started
+    assert_true(finished, "loop must return when stopped with no other events: #{err.inspect}")
+    assert_operator(elapsed, :<, 1.0, "loop must return promptly after stop")
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  # Regression: the self-pipe notification must never block the event
+  # loop thread. A callback that toggles enable/disable many times fills
+  # the pipe; a full pipe already means "notified", so it must not hang.
+  def test_self_pipe_full_does_not_block_loop
+    tw = nil
+    iterations = 40_000
+    done = false
+    tw = EventLoopCompat::TimerWatcher.new(0.01, true) do
+      iterations.times do
+        tw.disable
+        tw.enable
+      end
+      done = true
+      @loop.stop
+    end
+    tw.attach(@loop)
+    finished, err = run_in_thread(@loop, 10)
+    assert_true(finished, "loop must not hang when the self-pipe fills up: #{err.inspect}")
+    assert_true(done, "callback must have completed")
+    assert_equal([], @errors.map { |e| e.class.name })
+  end
+
+  # Regression: EINTR means nothing was written, so notify must retry
+  # instead of treating the write as done. An empty self-pipe would
+  # leave the loop blocked in select() with no pending notification.
+  def test_notify_retries_write_on_eintr
+    reader, writer = IO.pipe
+    @loop.instance_variable_set(:@notify_writer, EINTROnceWriter.new(writer))
+    @loop.send(:notify)
+    assert_equal(".", reader.read_nonblock(1), "EINTR must be retried, not treated as notified")
+  rescue Errno::EAGAIN
+    flunk("notify wrote nothing after EINTR")
+  ensure
+    reader.close rescue nil
+    writer.close rescue nil
+  end
+
+  def test_notify_treats_wait_writable_as_an_existing_notification
+    @loop.instance_variable_set(:@notify_writer, FullPipeWriter.new)
+    assert_nothing_raised { @loop.send(:notify) }
+  end
+
+  def test_run_returns_when_all_watchers_detached
+    tw = nil
+    tw = EventLoopCompat::TimerWatcher.new(0.05, true) do |watcher|
+      watcher.detach
+    end
+    tw.attach(@loop)
+    finished, err = run_in_thread(@loop)
+    assert_true(finished, "loop must return when all watchers are detached: #{err.inspect}")
+    assert_false(tw.attached?)
+  end
+
+  def test_attach_from_another_thread
+    fired = 0
+    keeper = EventLoopCompat::TimerWatcher.new(0.05, true) { }
+    keeper.attach(@loop)
+    attacher = Thread.new do
+      sleep 0.15
+      tw = EventLoopCompat::TimerWatcher.new(0.05, true) { fired += 1 }
+      tw.attach(@loop)
+    end
+    run_with_watchdog(@loop, 0.5)
+    attacher.join
+    assert_operator(fired, :>=, 2, "watcher attached from another thread must run")
+  end
+
+  # Regression: a command queued while the loop is between process_commands
+  # and select() must never be lost. The loop has no timers, so it blocks
+  # in select forever; only a persistent notification can wake it.
+  def test_cross_thread_attach_stress_while_blocked_forever
+    sock1, sock2 = UNIXSocket.pair
+    io = EventLoopCompat::IOWatcher.new(sock1) { sock1.read(1) }
+    io.attach(@loop)
+    rounds = 100
+    fired = 0
+    attacher = Thread.new do
+      rounds.times do
+        sock2.write("x")
+        tw = EventLoopCompat::TimerWatcher.new(0.01) { fired += 1 }
+        tw.attach(@loop)
+      end
+    end
+    run_with_watchdog(@loop, 2.0)
+    attacher.join
+    assert_equal(rounds, fired, "every timer attached from another thread must fire (lost wakeup?)")
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  # Regression: after commands remove the last watcher, the loop must not
+  # enter select again.
+  def test_run_returns_when_last_watcher_detached_from_thread
+    sock1, sock2 = UNIXSocket.pair
+    io = EventLoopCompat::IOWatcher.new(sock1) { }
+    io.attach(@loop)
+    detacher = Thread.new do
+      sleep 0.15
+      io.detach
+    end
+    started = monotonic
+    finished, err = run_in_thread(@loop)
+    detacher.join
+    elapsed = monotonic - started
+    assert_true(finished, "loop must return when the last watcher is detached: #{err.inspect}")
+    assert_operator(elapsed, :<, 1.0, "loop must return promptly after the last detach")
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  #
+  # run_once (counter client mode)
+  #
+
+  def test_run_once_delivers_io_events
+    sock1, sock2 = UNIXSocket.pair
+    received = []
+    w = EventLoopCompat::IOWatcher.new(sock1) { received << w.io.read_nonblock(100) }
+    w.attach(@loop)
+    sock2.write("hello")
+    @loop.run_once(0.5)
+    assert_equal(["hello"], received)
+    w.detach
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  # io-event fibers are bound to the thread that created them. The
+  # counter client may call run_once from different threads (its mutex
+  # only serializes the calls), so the selector and the watcher fibers
+  # must be rebuilt on the new thread instead of raising FiberError.
+  def test_run_once_from_another_thread_rebuilds_runtimes
+    sock1, sock2 = UNIXSocket.pair
+    received = []
+    w = EventLoopCompat::IOWatcher.new(sock1) { received << w.io.read_nonblock(100) }
+    w.attach(@loop)
+
+    @loop.run_once(0.01) # creates the selector and the fiber here
+    sock2.write("first")
+    th = Thread.new { @loop.run_once(0.5) }
+    th.join(5)
+    assert_equal(["first"], received)
+
+    sock2.write("second")
+    th2 = Thread.new { @loop.run_once(0.5) }
+    th2.join(5)
+    assert_equal(["first", "second"], received)
+    w.detach
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  # A run() after run_once mode must not reuse the selector or the
+  # fibers left over from run_once mode.
+  def test_run_after_run_once_starts_fresh_runtimes
+    sock1, sock2 = UNIXSocket.pair
+    received = []
+    w = EventLoopCompat::IOWatcher.new(sock1) { received << w.io.read_nonblock(100) }
+    w.attach(@loop)
+    @loop.run_once(0.01)
+    sock2.write("hello")
+    run_with_watchdog(@loop, 0.5)
+    assert_equal(["hello"], received)
+    assert_equal([], @errors.map { |e| e.class.name })
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+
+  #
+  # error handling
+  #
+
+  def test_timer_callback_exception_does_not_stop_loop
+    fired = 0
+    tw = EventLoopCompat::TimerWatcher.new(0.05, true) do
+      fired += 1
+      raise "boom"
+    end
+    tw.attach(@loop)
+    run_with_watchdog(@loop)
+    assert_operator(fired, :>=, 3, "loop must keep running after callback errors")
+    assert_operator(@errors.size, :>=, 3)
+    assert_kind_of(RuntimeError, @errors.first)
+  end
+
+  def test_io_callback_exception_does_not_stop_loop
+    sock1, sock2 = UNIXSocket.pair
+    called = 0
+    w = EventLoopCompat::IOWatcher.new(sock1) do
+      called += 1
+      raise "io boom"
+    end
+    w.attach(@loop)
+    sender = EventLoopCompat::TimerWatcher.new(0.05, true) { sock2.write("x") rescue nil }
+    sender.attach(@loop)
+    run_with_watchdog(@loop)
+    assert_operator(called, :>=, 2, "IO watcher must keep working after callback errors")
+    assert_operator(@errors.size, :>=, 2)
+  ensure
+    sock1.close rescue nil
+    sock2.close rescue nil
+  end
+end

@@ -47,6 +47,14 @@ class TailInputTest < Test::Unit::TestCase
     Fluent::Plugin::TailInput::TargetInfo.new(path, Fluent::FileWrapper.stat(path).ino)
   end
 
+  def file_change_notifications?
+    if Fluent::PluginHelper::EventLoop::EVENT_LOOP_BACKEND == :io_event_compat
+      EventLoopCompat::Inotify.supported?
+    else
+      Fluent.linux? || Fluent.windows?
+    end
+  end
+
   ROOT_CONFIG = config_element("ROOT", "", {
                             "tag" => "t1",
                             "rotate_wait" => "2s",
@@ -667,7 +675,7 @@ class TailInputTest < Test::Unit::TestCase
             require 'fluent/config/types'
             limit_bytes_value = Fluent::Config.size_value(limit_bytes)
             io_handler.instance_variable_set(:@number_bytes_read, limit_bytes_value)
-            if Fluent.linux? || Fluent.windows?
+            if file_change_notifications?
               mock.proxy(io_handler).handle_notify.at_least(5)
             else
               mock.proxy(io_handler).handle_notify.twice
@@ -683,7 +691,7 @@ class TailInputTest < Test::Unit::TestCase
 
           # We should not do shutdown here due to hard timeout.
           d.run do
-            if Fluent.linux? || Fluent.windows?
+            if file_change_notifications?
               # Other platforms receive no stat notification while appending, so it
               # would just consume the throttling window and make this test flaky.
               start_time = Fluent::Clock.now
@@ -1621,7 +1629,7 @@ class TailInputTest < Test::Unit::TestCase
 
     # https://github.com/fluent/fluentd/pull/3541#discussion_r740197711
     def test_watch_wildcard_path_without_watch_timer
-      omit "need file change notifications" unless Fluent.linux? || Fluent.windows?
+      omit "need file change notifications" unless file_change_notifications?
 
       config = config_element("ROOT", "", {
                                 "path" => "#{@tmp_dir}/tail*.txt",
@@ -3240,7 +3248,6 @@ class TailInputTest < Test::Unit::TestCase
     end
 
     def test_should_create_new_watcher_for_new_file_with_same_name
-      now = Time.now
       config = common_follow_inode_config + config_element('', '', {"limit_recently_modified" => "2s"})
 
       d = create_driver(config, false)
@@ -3249,7 +3256,6 @@ class TailInputTest < Test::Unit::TestCase
         f.puts "test1"
         f.puts "test2"
       }
-      path_ino = create_target_info("#{@tmp_dir}/tail.txt")
 
       d.run(expect_emits: 1, shutdown: false) do
         Fluent::FileWrapper.open("#{@tmp_dir}/tail.txt", "ab") {|f| f.puts "test3\n"}
@@ -3262,12 +3268,9 @@ class TailInputTest < Test::Unit::TestCase
       }
       new_path_ino = create_target_info("#{@tmp_dir}/tail.txt")
 
-      Timecop.travel(now + 10) do
-        sleep 3
-        d.instance.instance_eval do
-          @tails[path_ino.path] == nil
-          @tails[new_path_ino.path] != nil
-        end
+      waiting(10, plugin: d.instance) do
+        sleep 0.05 until d.instance.instance_variable_get(:@tails)[new_path_ino.path]&.ino == new_path_ino.ino &&
+                         d.events.length >= 5
       end
 
       events = d.events
@@ -4970,8 +4973,24 @@ class TailInputTest < Test::Unit::TestCase
       assert_equal(lines + 1, d.events.size)
     end
 
+    def wait_for_rotated_watcher_to_drain(driver, watcher, rotated_path, timeout)
+      waiting(timeout) { sleep 0.1 until driver.instance.instance_variable_get(:@tails_rotate_wait).empty? }
+    rescue Timeout::Error
+      rotation = driver.instance.instance_variable_get(:@tails_rotate_wait)[watcher]
+      timer = rotation && rotation[:timer]
+      group = watcher.group_watcher
+      counter = group && group.current_paths[watcher.path]
+      flunk("rotated watcher did not drain: events=#{driver.events.size}, " \
+            "position=#{watcher.pe.read_pos}/#{File.size(rotated_path)}, " \
+            "eof=#{watcher.eof?}, pending=#{watcher.pending?}, " \
+            "timer_attached=#{timer&.attached?}, timer_enabled=#{timer&.enabled?}, " \
+            "timer_deadline=#{timer&.instance_variable_get(:@deadline)}, " \
+            "group_lines=#{counter&.number_lines_read}, " \
+            "group_since=#{counter&.start_reading_time}")
+    end
+
     test "a rotated file keeps being read under a group limit without the watch timer" do
-      omit "need file change notifications" unless Fluent.linux? || Fluent.windows?
+      omit "need file change notifications" unless file_change_notifications?
       pattern = "/^#{@tmp_dir}\/(?<file>.+)\.log.*$/"
       rule = create_rule_directive({ "file" => "/.*/" }, 1)
       config = config_element(
@@ -5004,13 +5023,13 @@ class TailInputTest < Test::Unit::TestCase
         FileUtils.move("#{@tmp_dir}/tail.log", "#{@tmp_dir}/tail.log.1")
         waiting(5) { sleep 0.1 until d.instance.instance_variable_get(:@tails_rotate_wait).size == 1 }
 
-        waiting(15) { sleep 0.1 until d.instance.instance_variable_get(:@tails_rotate_wait).empty? }
+        wait_for_rotated_watcher_to_drain(d, tw, "#{@tmp_dir}/tail.log.1", 15)
       end
       assert_equal(lines, d.events.size)
     end
 
     test "a transient emit error does not stop draining a rotated file without the watch timer" do
-      omit "need file change notifications" unless Fluent.linux? || Fluent.windows?
+      omit "need file change notifications" unless file_change_notifications?
       pattern = "/^#{@tmp_dir}\/(?<file>.+)\.log.*$/"
       rule = create_rule_directive({ "file" => "/.*/" }, 1)
       config = config_element(
@@ -5054,7 +5073,7 @@ class TailInputTest < Test::Unit::TestCase
 
         FileUtils.move("#{@tmp_dir}/tail.log", "#{@tmp_dir}/tail.log.1")
         waiting(5) { sleep 0.1 until d.instance.instance_variable_get(:@tails_rotate_wait).size == 1 }
-        waiting(20) { sleep 0.1 until d.instance.instance_variable_get(:@tails_rotate_wait).empty? }
+        wait_for_rotated_watcher_to_drain(d, tw, "#{@tmp_dir}/tail.log.1", 20)
       end
       assert_true(raised)
       assert_equal([], d.logs.grep(/Stopping the timer/))

@@ -91,7 +91,7 @@ class HttpInputTest < Test::Unit::TestCase
 
     d.run(expect_records: 0, timeout: 5) do
       assert_raise(EOFError, Errno::ECONNRESET, Errno::EPIPE) do
-        post("/tag1", {"json" => {"a" => 1}.to_json})
+        post_to_disallowed_client
       end
     end
 
@@ -103,7 +103,7 @@ class HttpInputTest < Test::Unit::TestCase
 
     d.run(expect_records: 0, timeout: 5) do
       assert_raise(EOFError, Errno::ECONNRESET, Errno::EPIPE) do
-        post("/tag1", {"json" => {"a" => 1}.to_json}, {"X-Forwarded-For" => "10.0.0.1"})
+        post_to_disallowed_client("X-Forwarded-For" => "10.0.0.1")
       end
     end
 
@@ -1498,6 +1498,20 @@ class HttpInputTest < Test::Unit::TestCase
       req.set_form_data(params)
     end
     http.request(req)
+  end
+
+  # Net::HTTP sets TCP_NODELAY after connecting. If the server rejects the
+  # peer first, that setsockopt can fail with EINVAL on macOS before any
+  # request is sent. Use a raw socket to observe the disconnect itself.
+  def post_to_disallowed_client(headers = {})
+    body = {"a" => 1}.to_json
+    request = "POST /tag1 HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: #{body.bytesize}\r\n"
+    headers.each_pair { |key, value| request << "#{key}: #{value}\r\n" }
+    request << "\r\n#{body}"
+    TCPSocket.open("127.0.0.1", @port) do |socket|
+      socket.write(request)
+      socket.readpartial(1)
+    end
   end
 
   def compress_gzip(data)

@@ -18,9 +18,19 @@ require 'cool.io'
 require 'fluent/plugin_helper/thread'
 require 'fluent/clock'
 
+# PoC feature flag: FLUENTD_EVENT_LOOP_BACKEND=io_event_compat switches
+# the event loop implementation to the EventLoopCompat layer built on
+# top of the io-event gem. Everything that uses an event loop (the
+# event_loop, timer, server and counter helpers, the bundled plugins,
+# and the legacy fluent/compat/socket_util API) follows this flag. The
+# cool.io gem is not loaded with the io_event_compat backend; the
+# EventLoopCompat layer defines the Coolio namespace instead.
+
 module Fluent
   module PluginHelper
     module EventLoop
+      EVENT_LOOP_BACKEND = ENV['FLUENTD_EVENT_LOOP_BACKEND'] == 'io_event_compat' ? :io_event_compat : :coolio
+
       # Currently this plugin helper is only for other helpers, not plugins.
       # there's no way to create customized watchers to attach event loops.
       include Fluent::PluginHelper::Thread
@@ -74,6 +84,15 @@ module Fluent
       def initialize
         super
         @_event_loop = Coolio::Loop.new
+        if EVENT_LOOP_BACKEND == :io_event_compat
+          @_event_loop.error_handler = ->(_watcher, error) {
+            begin
+              log.error "Unexpected error raised in event loop watcher", error: error
+            rescue
+              # log may not be available
+            end
+          }
+        end
         @_event_loop_running = false
         @_event_loop_mutex = Mutex.new
         # plugin MAY configure loop run timeout in #configure
@@ -165,6 +184,7 @@ module Fluent
         # do nothing
         def on_timer; end
       end
+
     end
   end
 end

@@ -30,6 +30,10 @@ Gem::Specification.new do |gem|
   gem.add_runtime_dependency("bundler")
   gem.add_runtime_dependency("msgpack", [">= 1.3.1", "< 2.0.0"])
   gem.add_runtime_dependency("cool.io", [">= 1.4.5", "< 2.0.0"])
+  # Used by the io-event based event loop backend (FLUENTD_EVENT_LOOP_BACKEND).
+  # Declared directly because the io-event backend must not depend on it being
+  # pulled in transitively by unrelated gems.
+  gem.add_runtime_dependency("io-event", ["~> 1.11"])
   gem.add_runtime_dependency("serverengine", [">= 2.3.2", "< 3.0.0"])
   gem.add_runtime_dependency("http_parser.rb", [">= 0.5.1", "< 0.9.0"])
   gem.add_runtime_dependency("sigdump", ["~> 0.2.5"])
@@ -62,6 +66,8 @@ Gem::Specification.new do |gem|
 
   # gems that aren't default gems as of Ruby 4.0
   gem.add_runtime_dependency("ostruct", ["~> 0.6"])
+  # The io-event compat backend uses Fiddle for Linux inotify.
+  gem.add_runtime_dependency("fiddle", ["~> 1.1"])
 
   # build gem for a certain platform. see also Rakefile
   fake_platform = ENV['GEM_BUILD_FAKE_PLATFORM'].to_s
@@ -71,9 +77,6 @@ Gem::Specification.new do |gem|
     gem.add_runtime_dependency("win32-ipc", ["~> 0.7.0"])
     gem.add_runtime_dependency("win32-event", ["~> 0.6.3"])
     gem.add_runtime_dependency("certstore_c", ["~> 0.1.7"])
-
-    # gems that aren't default gems as of Ruby 3.5
-    gem.add_runtime_dependency("fiddle", ["~> 1.1"])
 
     # gems that aren't default gems as of Ruby 4.1
     gem.add_runtime_dependency("win32-registry", ["~> 0.1"])
